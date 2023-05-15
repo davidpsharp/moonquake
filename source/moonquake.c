@@ -33,14 +33,14 @@
 // split up code into multiple files
 
 // include graphics data
-#include "background.pal.c"
-#include "background.raw.c"
-#include "sprites.pal.c"
-#include "sprites.raw.c"
-#include "titlescreen.pal.c"
-#include "titlescreen.raw.c"
-#include "credits.pal.c"
-#include "credits.raw.c"
+extern const unsigned short background_Palette[256];
+extern const unsigned char background_Bitmap[15360];
+extern const unsigned short sprites_Palette[256];
+extern const unsigned char sprites_Bitmap[26112];
+extern const unsigned short titlescreen_Palette[256];
+extern const unsigned char titlescreen_Bitmap[38400];
+extern const unsigned short credits_Palette[256];
+extern const unsigned char credits_Bitmap[38400];
 
 // include sound fx data - no longer needed, included in soundfx.c
 //#include "explo.h"
@@ -2969,7 +2969,7 @@ void startGameAndManageContinues()
 }
 
 
-int AgbMain(void)
+int main(void)
 {
     
     
