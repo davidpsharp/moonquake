@@ -53,7 +53,7 @@ extern const unsigned char credits_Bitmap[38400];
 
 #include <maxmod.h>
 
-// include sound fx data
+// include sound fx data (these files generated in build folder as per Makefile from assets in maxmod_data/ )
 #include "soundbank.h"
 #include "soundbank_bin.h"
 

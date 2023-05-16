@@ -4,6 +4,9 @@
 *.gba 
 .build/
 
+# Mac OS Finder config
+.DS_Store
+
 # Prerequisites
 *.d
 
