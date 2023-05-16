@@ -42,11 +42,7 @@ extern const unsigned char titlescreen_Bitmap[38400];
 extern const unsigned short credits_Palette[256];
 extern const unsigned char credits_Bitmap[38400];
 
-// include sound fx data - no longer needed, included in soundfx.c
-//#include "explo.h"
-//#include "arg.h"
-//#include "rarg.h"
-//#include "token.h"
+
 
 // include libraries and macros
 #include "gba.h"
@@ -54,9 +50,13 @@ extern const unsigned char credits_Bitmap[38400];
 #include "sprites.h"
 #include "keypad.h"
 
-// include header files from defender source
-#include "soundfx.h"
-#include "interrupt.h"
+
+#include <maxmod.h>
+
+// include sound fx data
+#include "soundbank.h"
+#include "soundbank_bin.h"
+
 
 // define tile names (multiples of 4)
 #define T_BLOCK                     0
@@ -228,8 +228,26 @@ int lives;
 int score;
 bool playerHasContinued;
 
+mm_sound_effect explo = {
+    { SFX_EXPLO } ,			// id
+    (int)(1.0f * (1<<10)),	// rate
+    0,		// handle
+    255,	// volume
+    255,	// panning
+};
+
+mm_sound_effect token = {
+    { SFX_TOKEN } ,			// id
+    (int)(1.0f * (1<<10)),	// rate
+    0,		// handle
+    255,	// volume
+    255,	// panning
+};
+
+#define IRQ_VBLANK		0x0001	//!< Catch VBlank irq // added from libtonc - must be in libgba somewhere
+
 //the interrupt handle from crt0.s
-void InterruptProcess(void) __attribute__ ((section(".iwram")));
+//void InterruptProcess(void) __attribute__ ((section(".iwram")));
 
 
 // interrupt related registers
@@ -1405,7 +1423,7 @@ void moveMan()
         {
             // start dying
             
-            SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
+            //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
             
             lifeStatus = DYING;
             manFrame = 0;           // set to first frame of dying animation
@@ -1446,7 +1464,7 @@ void moveMan()
             if(!halo)
             {      
                 lifeStatus = DYING;
-                SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
+                //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
                 manFrame = 0;           // set to first frame of dying animation
                 drawSprite(OAM_GMAN, S_MAN_EXPLO_START, manX - xOffset, manY - yOffset);
                 return;
@@ -1502,7 +1520,8 @@ void detonateBomb(u8 x, u8 y)
     // note, end tip of north part of explosion seems to be a frame behind the rest, is it set up wrong at start of
     // explosion or just decays improperly?
     
-    SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
+    //SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
+    mmEffectEx(&explo);
     
     bombsCurrentlyDropped--;
     
@@ -1863,7 +1882,7 @@ void moveRobots()
                     // start robot dying animation
                     robot[i].move = FALSE;
                     robot[i].dead = DYING;
-                    SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_RARG);
+                    //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_RARG);
                 }
                                 
                 // if robot moving then adjust coords
@@ -2727,7 +2746,7 @@ void gameLoop(void)
                 // blank tile now we've got the gift
                 drawObject(manX / 16, manY / 16, T_SPACE);
                 
-                SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
+                //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
                 
                 switch( giftType )
                 {
@@ -2793,6 +2812,9 @@ void gameLoop(void)
         REG_BG1VOFS = yOffset;
         // copy main game sprites positions (man, halo, monsters) to the screen
         copyGameOAM();
+
+        // maxmod soundfx update
+        mmFrame();
         
     } // loop forever      
 }
@@ -2968,6 +2990,9 @@ void startGameAndManageContinues()
     
 }
 
+void onVBlank() {
+  mmVBlank();
+}
 
 int main(void)
 {
@@ -2990,10 +3015,18 @@ int main(void)
     // also available at http://www.staticfiends.com/galleries/government_galleries/0014.jpg
     displayTiledBitmap(credits_Bitmap, credits_Palette);
 
-    // now we have something on screen we can set up some things that need to remain for the rest of the program (like sound)
-    Interrupt_Init();
-    Interrupt_Enable();
-    SoundFX_Init();
+    // init sound fx
+    irqInit();
+
+	// Maxmod requires the vblank interrupt to reset sound DMA.
+	// Link the VBlank interrupt to mmVBlank, and enable it. 
+	irqSet( IRQ_VBLANK, onVBlank );
+
+    irqEnable(IRQ_VBLANK);
+
+    // initialise maxmod with soundbank and 8 channels
+    mmInitDefault( (mm_addr)soundbank_bin, 8 );
+
 
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];

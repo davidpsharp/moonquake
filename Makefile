@@ -25,7 +25,7 @@ BUILD		:= build
 SOURCES		:= source
 INCLUDES	:= include
 DATA		:=
-MUSIC		:=
+MUSIC		:= maxmod_data
 
 #---------------------------------------------------------------------------------
 # options for code generation
