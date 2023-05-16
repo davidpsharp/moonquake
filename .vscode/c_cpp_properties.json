@@ -1,22 +1,19 @@
-// originally from https://github.com/JamieDStewart/GBA_VSCode_Basic
 {
     "configurations": [
         {
             "name": "Mac",
             "includePath": [
-                //"/usr/include",
-                //"/usr/local/include",
                 "${workspaceFolder}",
                 "${workspaceFolder}/include",
+                "${workspaceFolder}/build",
                 "/opt/devkitPro/devkitARM/arm-none-eabi/include",
-                "/opt/devkitPro/devkitARM/lib/gcc/arm-none-eabi/12.2.0/include"
+                "/opt/devkitPro/devkitARM/lib/gcc/arm-none-eabi/12.2.0/include",
+                "/opt/devkitpro/libgba/include"
             ],
             "defines": [],
             "intelliSenseMode": "clang-x64",
             "browse": {
                 "path": [
-                    //"/usr/include",
-                    //"/usr/local/include",
                     "${workspaceFolder}",
                     "${workspaceFolder}/include",
                     "/opt/devkitPro/devkitARM/arm-none-eabi/include",
