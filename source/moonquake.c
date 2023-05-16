@@ -45,6 +45,7 @@ extern const unsigned char credits_Bitmap[38400];
 
 
 // include libraries and macros
+// TODO: this is currently devKitAdvance era manually copied header, move to libgba ASAP
 #include "gba.h"
 #include "screenmodes.h"
 #include "sprites.h"
