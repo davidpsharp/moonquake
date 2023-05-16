@@ -1,11 +1,21 @@
 
 # devKitARM GBA specifics
 *.sav
-*.gba 
+*.gba
 .build/
+
+# MaxMod generated files at Make time
+soundbank_bin.h
+soundbank.bin
+soundbank.bin.s
+soundbank.h
 
 # Mac OS Finder config
 .DS_Store
+
+
+
+####################################### below here is standard github C .gitignore file ###########################
 
 # Prerequisites
 *.d
