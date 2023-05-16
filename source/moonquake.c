@@ -245,6 +245,10 @@ mm_sound_effect token = {
     255,	// panning
 };
 
+int inDevelopment = 0; // remove title screens to get to action faster for code-test cycle
+
+int vblankTest = 0;
+
 #define IRQ_VBLANK		0x0001	//!< Catch VBlank irq // added from libtonc - must be defined in libgba somewhere
 
 
@@ -640,11 +644,12 @@ int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
         
         // full volume, enable sound channel 1 to left and right
         // (values determined using BeLogic's sound1demo approximately to Acorn sound)
+        
         REG_SOUNDCNT_L=0x1177;
         REG_SOUND1CNT_L=0x0000;
         REG_SOUND1CNT_H=0x30C0;
         REG_SOUND1CNT_X=0x8790; // should start a fresh noise and give the break in the constant tone that I need
-        
+
         wait();
         copyAllOAM();
     }
@@ -1161,7 +1166,8 @@ void nuke()
 }
 
 // upgrade the position of the background scrolling relative to the player's position on the game board
-inline void updateBackgroundOffset(void)
+// previously had this function set to inline but seemed to break linker in debug build so removed
+void updateBackgroundOffset(void)
 {
     // scroll background in X
     if(manX >= 7 * 16)
@@ -2807,12 +2813,124 @@ void startGameAndManageContinues()
 }
 
 void onVBlank() {
-  mmVBlank();
+  //vblankTest++; // ??? i have tested and this is getting set
+  mmVBlank(); // maxmod sound sample library update
 }
+
+
+// badly hacked out of libtonc bios .s try again... doesn't return!
+// BROKEN
+void VBlankIntrWaitDS(void)
+{
+    /*
+    asm volatile("swi		0x05;"
+              "bx		lr;"
+              : : :
+              );
+    */
+}
+
+#define KEY_A			0x0001	//!< Button A
+#define KEY_B			0x0002	//!< Button B
+
+void soundTest()
+{
+   	irqInit();
+
+	// Maxmod requires the vblank interrupt to reset sound DMA.
+	// Link the VBlank interrupt to mmVBlank, and enable it. 
+	irqSet( IRQ_VBLANK, onVBlank );
+
+	irqEnable(IRQ_VBLANK);
+
+	consoleDemoInit();
+
+	// ansi escape sequence to clear screen and home cursor
+	// /x1b[line;columnH
+	iprintf("\x1b[2J");
+
+	// initialise maxmod with soundbank and 8 channels
+    mmInitDefault( (mm_addr)soundbank_bin, 8 );
+
+    // redefine locally to ensure not using globals
+	mm_sound_effect exploX = {
+		{ SFX_EXPLO } ,			// id
+		(int)(1.0f * (1<<10)),	// rate
+		0,		// handle
+		255,	// volume
+		255,	// panning
+	};
+
+	mm_sound_effect tokenX = {
+		{ SFX_TOKEN } ,			// id
+		(int)(1.0f * (1<<10)),	// rate
+		0,		// handle
+		255,	// volume
+		255,	// panning
+	};
+
+	// ansi escape sequence to clear screen and home cursor
+	// /x1b[line;columnH
+	iprintf("\x1b[2J");
+	// ansi escape sequence to set print co-ordinates
+	// /x1b[line;columnH
+	iprintf("\x1b[0;4Hmoonquake sound test");
+	iprintf("\x1b[3;0HHold A for token sound");
+	iprintf("\x1b[4;0HPress B for explo sound");
+    
+	// sound effect handle (for cancelling it later)
+	mm_sfxhand amb = 0;
+
+    int keyPress = 0;
+
+    mmEffectEx(&explo); // makes a sound but not for long - why different to my isolated sound test code
+
+	do {
+
+		int keys_pressed, keys_released;
+        
+		// VBlankIntrWaitDS(); // broken
+		
+        wait(); // poor mans poll of vblank
+
+        mmFrame();
+	 
+		scanKeys();
+
+		keys_pressed = keysDown();
+		keys_released = keysUp();
+
+
+		// Play looping ambulance sound effect out of left speaker if A button is pressed
+		if ( keys_pressed & KEY_A ) {
+            keyPress = 1;
+			amb = mmEffectEx(&tokenX);
+		}
+
+		// stop ambulance sound when A button is released
+		if ( keys_released & KEY_A ) {
+			mmEffectCancel(amb);
+		}
+
+		// Play explosion sound effect out of right speaker if B button is pressed
+		if ( keys_pressed & KEY_B ) {
+            keyPress = 1;
+			mmEffectEx(&exploX);
+		}
+
+        if(keyPress)
+        {
+            iprintf("\x1b[5;0HPressed");
+            keyPress = 0; // reset
+        }
+	} while( 1 );
+}
+
 
 int main(void)
 {
     
+    soundTest();
     
     // debug build text, comment this out in release builds
     //displayText();
@@ -2827,9 +2945,7 @@ int main(void)
     int i;
     for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
     
-    // credits screen image taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
-    // also available at http://www.staticfiends.com/galleries/government_galleries/0014.jpg
-    displayTiledBitmap(credits_Bitmap, credits_Palette);
+   
 
     // init sound fx
     irqInit();
@@ -2847,172 +2963,188 @@ int main(void)
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
-    // display 1st message        
-    u32 spriteNum = OAM_LETTERS;
-    writeText(-1, 10, "CONVERSION:", &spriteNum);
-    writeText(-1, 30, "DAVID SHARP", &spriteNum);
-    writeText(-1, 50, "ORIGINAL AND GRAPHICS:", &spriteNum);
-    writeText(-1, 70, "PAUL TAYLOR", &spriteNum);
-    writeText(-1, 120, "WWW.DAVIDSHARP.COM/GBA", &spriteNum);
-    
-    copyAllOAM();
-        
-    delayOrKeypress(300);
-    
-    // display 2nd message
+    // skip title screens if in development
+    if(!inDevelopment)
+    {
+        // credits screen image taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
+        // also available at http://www.staticfiends.com/galleries/government_galleries/0014.jpg
+        displayTiledBitmap(credits_Bitmap, credits_Palette);
 
-    fadeOutSprites(OAM_LETTERS, spriteNum-1);
-    
-    turnOffAllSprites();
-    
-    // display 1st message        
-    spriteNum = OAM_LETTERS;
-    writeText(-1, 40, "COMPETITION ENTRY IN", &spriteNum);
-    writeText(-1, 60, "GBAX.COM 2004", &spriteNum);
-    writeText(-1, 110, "WWW.GBAEMU.COM", &spriteNum);
-    
-    copyAllOAM();
-    
-    delayOrKeypress(300);
+        // display 1st message        
+        u32 spriteNum = OAM_LETTERS;
+        writeText(-1, 10, "CONVERSION:", &spriteNum);
+        writeText(-1, 30, "DAVID SHARP", &spriteNum);
+        writeText(-1, 50, "ORIGINAL AND GRAPHICS:", &spriteNum);
+        writeText(-1, 70, "PAUL TAYLOR", &spriteNum);
+        writeText(-1, 120, "WWW.DAVIDSHARP.COM/GBA", &spriteNum);
         
-    fadeToBlack();
         
+        copyAllOAM();
+            
+        delayOrKeypress(300);
+        
+        // display 2nd message
+
+        fadeOutSprites(OAM_LETTERS, spriteNum-1);
+        
+        /*
+        turnOffAllSprites();
+                
+        // remove old competition message now it's 19 years ago...
+        spriteNum = OAM_LETTERS;
+        writeText(-1, 40, "COMPETITION ENTRY IN", &spriteNum);
+        writeText(-1, 60, "GBAX.COM 2004", &spriteNum);
+        writeText(-1, 110, "WWW.GBAEMU.COM", &spriteNum);
+        
+        copyAllOAM();
+        
+        delayOrKeypress(300);
+        */
+
+        fadeToBlack();
+    }
+
     // infinite loop for menu and game
     for( ; ; )
     {
-        
-        // turn all sprites off before displaying a mode where they're enabled
-        initSprites();
-        
-        // load sprite palette
-        int i;
-        for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
-        // load sprite tile data
-        u16* sprTileData = (u16*)sprites_Bitmap;
-        for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
-        
-        displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
-        
-        u32 spriteNum = OAM_LETTERS;
-        writeText(-1, 40, "START GAME", &spriteNum);
-        u32 firstSpriteOfDeepEnd = spriteNum;
-        writeText(-1, 60, "IN AT THE DEEP END", &spriteNum);
-        u32 firstSpriteOfInstructions = spriteNum;
-        writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
-        
-        // cycle the brightness of selected letters
-        // for brightness adjust the sprites appear to have to be in semi-transparent mode
-        
-        // initialise the start game option to be the fading one
-        
-        int direction = 1;
-        int fadeValue = 0;
         int selected = 0;
-        
-        BrightnessInit();
-        
-        BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd - 1);
-        BrightnessSetSpritesInactive(firstSpriteOfDeepEnd, firstSpriteOfInstructions - 1);
-        BrightnessSetSpritesInactive(firstSpriteOfInstructions, spriteNum - 1);
-        
-        // flags whether the last button press detected has been released (to force discrete button
-        // press and not have to time for auto-repeat)
-        int buttonReleased = 1;
-        
-        // while nothing selected
-        while( !( KEY_DOWN(KEYA) || KEY_DOWN(KEYSTART) ) )
+
+        // go straight into 1-player game if dev-testing
+        if(!inDevelopment)
         {
-        	
-        	// re-seed randomizer as many times through loop as user permits before pressing
-        	// a button to start, that way we should very rarely get the same random seed
-        	// when generating the level
-        	srand(rand());
-            
-            // adjust fade one level
 
-            fadeValue += direction;
-            if(fadeValue > 13)
+            // turn all sprites off before displaying a mode where they're enabled
+            initSprites();
+            
+            // load sprite palette
+            int i;
+            for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+            // load sprite tile data
+            u16* sprTileData = (u16*)sprites_Bitmap;
+            for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
+            
+            displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
+            
+            u32 spriteNum = OAM_LETTERS;
+            writeText(-1, 40, "START GAME", &spriteNum);
+            u32 firstSpriteOfDeepEnd = spriteNum;
+            writeText(-1, 60, "IN AT THE DEEP END", &spriteNum);
+            u32 firstSpriteOfInstructions = spriteNum;
+            writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
+            
+            // cycle the brightness of selected letters
+            // for brightness adjust the sprites appear to have to be in semi-transparent mode
+            
+            // initialise the start game option to be the fading one
+            
+            int direction = 1;
+            int fadeValue = 0;
+                        
+            BrightnessInit();
+            
+            BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd - 1);
+            BrightnessSetSpritesInactive(firstSpriteOfDeepEnd, firstSpriteOfInstructions - 1);
+            BrightnessSetSpritesInactive(firstSpriteOfInstructions, spriteNum - 1);
+            
+            // flags whether the last button press detected has been released (to force discrete button
+            // press and not have to time for auto-repeat)
+            int buttonReleased = 1;
+            
+            // while nothing selected
+            while( !( KEY_DOWN(KEYA) || KEY_DOWN(KEYSTART) ) )
             {
-                direction = -1;
-                fadeValue = 12;
-            }
-            else if(fadeValue < 0)
-            {
-                direction = 1;
-                fadeValue = 1;
-            }
                 
-            // flip state if key pressed
+                // re-seed randomizer as many times through loop as user permits before pressing
+                // a button to start, that way we should very rarely get the same random seed
+                // when generating the level
+                srand(rand());
+                
+                // adjust fade one level
 
-            
-            int dirKeyPressed = 0;
-
-            if(buttonReleased)
-            {                        
-                if( KEY_DOWN(KEYDOWN) )
+                fadeValue += direction;
+                if(fadeValue > 13)
                 {
-                    selected = (selected + 1) % 3;
-                    
-                    dirKeyPressed = 1;
+                    direction = -1;
+                    fadeValue = 12;
                 }
-                else if( KEY_DOWN(KEYUP) )
+                else if(fadeValue < 0)
                 {
-                    selected--;
+                    direction = 1;
+                    fadeValue = 1;
+                }
                     
-                    if(selected < 0)
+                // flip state if key pressed
+
+                
+                int dirKeyPressed = 0;
+
+                if(buttonReleased)
+                {                        
+                    if( KEY_DOWN(KEYDOWN) )
                     {
-                        selected = 2;
+                        selected = (selected + 1) % 3;
+                        
+                        dirKeyPressed = 1;
+                    }
+                    else if( KEY_DOWN(KEYUP) )
+                    {
+                        selected--;
+                        
+                        if(selected < 0)
+                        {
+                            selected = 2;
+                        }
+                        
+                        dirKeyPressed = 1;
+                    }
+                }
+                
+                if(dirKeyPressed)
+                {
+                    buttonReleased = 0;
+                    
+                    fadeValue = 0;
+                    
+                    // turn all sprites off         
+                    BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum-1);
+
+                    // turn on selected entry                
+                    switch(selected)
+                    {
+                        case 0 : BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd-1); break;
+                        case 1 : BrightnessSetSpritesActive(firstSpriteOfDeepEnd, firstSpriteOfInstructions-1); break;
+                        case 2 : BrightnessSetSpritesActive(firstSpriteOfInstructions, spriteNum-1); break;
                     }
                     
-                    dirKeyPressed = 1;
+                    dirKeyPressed = 0;
+                    
                 }
-            }
-            
-            if(dirKeyPressed)
-            {
-                buttonReleased = 0;
                 
-                fadeValue = 0;
+                // delay and update display
                 
-                // turn all sprites off         
-                BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum-1);
-
-                // turn on selected entry                
-                switch(selected)
+                delay(2);
+                BrightnessSetLevel(fadeValue);
+                copySelectOAM(OAM_LETTERS, spriteNum);
+                
+                // debounce button press
+                    
+                if( !KEY_DOWN(KEYDOWN) && !KEY_DOWN(KEYUP) )
                 {
-                    case 0 : BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd-1); break;
-                    case 1 : BrightnessSetSpritesActive(firstSpriteOfDeepEnd, firstSpriteOfInstructions-1); break;
-                    case 2 : BrightnessSetSpritesActive(firstSpriteOfInstructions, spriteNum-1); break;
+                    buttonReleased = 1;
                 }
-                
-                dirKeyPressed = 0;
-                
             }
             
-            // delay and update display
+            BrightnessEnd();        
             
-            delay(2);
-            BrightnessSetLevel(fadeValue);
-			copySelectOAM(OAM_LETTERS, spriteNum);
-			
-			// debounce button press
-                
-            if( !KEY_DOWN(KEYDOWN) && !KEY_DOWN(KEYUP) )
-            {
-                buttonReleased = 1;
-            }
-        }
-        
-        BrightnessEnd();        
-        
-        fadeToBlack();
-        
-        turnOffAllSprites();
-        copyAllOAM();
-        
-        // load sprite palette
-        for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
-        
+            fadeToBlack();
+            
+            turnOffAllSprites();
+            copyAllOAM();
+            
+            // load sprite palette
+            for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+        } // end of menu system, now act on it...
+
         switch(selected)
         {
             case 0: startLevel = 0; startGameAndManageContinues(); break;
