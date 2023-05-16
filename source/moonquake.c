@@ -245,36 +245,7 @@ mm_sound_effect token = {
     255,	// panning
 };
 
-#define IRQ_VBLANK		0x0001	//!< Catch VBlank irq // added from libtonc - must be in libgba somewhere
-
-//the interrupt handle from crt0.s
-//void InterruptProcess(void) __attribute__ ((section(".iwram")));
-
-
-// interrupt related registers
-#define REG_TM0CNT_L	*(u16*)0x4000100	//Timer 0 count value
-#define REG_TM0CNT_H    *(u16*)0x4000102	//Timer 0 Control
-#define REG_DMA1CNT     *(u32*)0x40000C4	//DMA1 Control (Amount)
-#define REG_DMA1CNT_L   *(u16*)0x40000C4	//DMA1 Control Low Value
-#define REG_DMA1CNT_H   *(u16*)0x40000C6	//DMA1 Control High Value
-#define REG_SOUNDCNT_L *(volatile u16*)0x4000080		//DMG sound control
-#define REG_SOUNDCNT_H *(volatile u16*)0x4000082		//Direct sound control
-#define REG_SOUNDCNT_X *(volatile u16*)0x4000084	    //Extended sound control
-#define REG_DMA1SAD     *(u32*)0x40000BC	//DMA1 Source Address
-#define REG_DMA1DAD     *(u32*)0x40000C0	//DMA1 Desination Address
-#define REG_TM1CNT_L   *(u16*)0x4000104		//Timer 2 count value
-#define REG_TM1CNT_H   *(u16*)0x4000106		//Timer 2 control
-
-#define REG_DMA2SAD     *(u32*)0x40000C8	//DMA2 Source Address
-#define REG_DMA2DAD     *(u32*)0x40000CC	//DMA2 Destination Address
-#define REG_DMA2CNT_H   *(u16*)0x40000D2	//DMA2 Control High Value
-#define REG_TM2D       *(u16*)0x4000108		//Timer 3?
-#define REG_TM2CNT     *(u16*)0x400010A		//Timer 3 Control
-#define REG_TM3D       *(u16*)0x400010C		//Timer 4?
-#define REG_TM3CNT     *(u16*)0x400010E		//Timer 4 Control
-
-
-
+#define IRQ_VBLANK		0x0001	//!< Catch VBlank irq // added from libtonc - must be defined in libgba somewhere
 
 
 // prototype the various ANSI functions to prevent implicit declaration warnings later
@@ -282,169 +253,13 @@ int rand(void);
 int strlen(const char*);
 void srand(int);
 
-/*
-// to use simple interrupt processing for this then need to go to crt0.s and uncomment __FastInterrupts
-// and recomment SingleInterrupts on line ~101
-void InterruptProcess(void)
-{
-    u16 intFlags = REG_IE & REG_IF;
-    
-    if( intFlags & 0x10 )
-    {
-        // timer1 overflows - sample finished so stop Direct sound
-    
-        REG_TM0CNT_H=0;	//disable timer 0
-    	REG_DMA1CNT_H=0; //stop DMA		
-    	REG_IF |= REG_IF; //clear the interrupt(s)
-    }
-    else if( intFlags & 0x20)
-    {
-        
-        REG_TM0CNT_H=0;	//disable timer 0
-    	REG_DMA2CNT_H=0; //stop DMA		
-    	//clear the interrupt(s)
-    	REG_IF |= REG_IF;
-    }
-}
-
-void playSound(const char* sample, u16 length, u16 channel)
-{
-    //Play a mono sound at 16khz in DMA mode Direct Sound
-	//uses timer 0 as sampling rate source
-	//uses timer 1 to count the samples played in order to stop the sound 
-	REG_SOUNDCNT_L=0;
-	REG_SOUNDCNT_H=0x0b0F;  //DS A&B + fifo reset + timer0 + max volume to L and R
-	REG_SOUNDCNT_X=0x0080;  //turn sound chip on
-	
-    if(1 == channel)
-    {
-    	REG_DMA1SAD=(unsigned long)sample;	//dma1 source
-    	REG_DMA1DAD=0x040000a0; //write to FIFO A address
-    	REG_DMA1CNT_H=0xb600;	//dma control: DMA enabled+ start on FIFO+32bit+repeat
-    	
-    	// sample sizes
-    	// rarg 14111
-    	// explo 19472
-    	// arg 20213
-    	// token 16720
-    	REG_TM1CNT_L=65535 - length;	    //0xffff-the number of samples to play
-    	REG_TM1CNT_H=0xC4;		//enable timer1 + irq and cascade from timer 0
-    
-    	REG_IE=0x10;	  	    //enable irq for timer 1 overflow
-    	REG_IME=1;				//enable interrupt
-    	
-    	//Formula for playback frequency is: 0xFFFF-round(cpuFreq/playbackFreq)
-    	// ??? samples are 10146Hz
-    	// timer count=65535-round(2^24/10146)=63882
-    	REG_TM0CNT_L=65535 - (16777216/10146);	    //10146Hz playback freq
-    	REG_TM0CNT_H=0x0080; 	//enable timer at CPU freq
-    }
-    else
-    {
-        // play sound on other channel
-        
-        // seriously need to consider adopting the interrupt and sound handling from Defender
-        // a lot neater than this, issues with which timers to use and the value for DMA2DAD
-    }
-}
 
 
-void playSoundTest(const char* sample, u16 length, u16 channel, const u16 freq)
-{
-    //Play a mono sound at 16khz in DMA mode Direct Sound
-	//uses timer 0 as sampling rate source
-	//uses timer 1 to count the samples played in order to stop the sound 
-	REG_SOUNDCNT_L=0;
-	REG_SOUNDCNT_H=0x0b0F;  //DS A&B + fifo reset + timer0 + max volume to L and R
-	REG_SOUNDCNT_X=0x0080;  //turn sound chip on
-	
-    if(1 == channel)
-    {
-    	REG_DMA1SAD=(unsigned long)sample;	//dma1 source
-    	REG_DMA1DAD=0x040000a0; //write to FIFO A address
-    	REG_DMA1CNT_H=0xb600;	//dma control: DMA enabled+ start on FIFO+32bit+repeat
-    	
-    	// sample sizes
-    	// rarg 14111
-    	// explo 19472
-    	// arg 20213
-    	// token 16720
-    	REG_TM1CNT_L=65535 - length;	    //0xffff-the number of samples to play
-    	REG_TM1CNT_H=0xC4;		//enable timer1 + irq and cascade from timer 0
-    
-    	REG_IE=0x10;	  	    //enable irq for timer 1 overflow
-    	REG_IME=1;				//enable interrupt
-    	
-    	//Formula for playback frequency is: 0xFFFF-round(cpuFreq/playbackFreq)
-    	// ??? samples are 10146Hz
-    	// timer count=65535-round(2^24/10146)=63882
-    	REG_TM0CNT_L=65535 - (16777216/freq);	    //10146Hz playback freq
-    	REG_TM0CNT_H=0x0080; 	//enable timer at CPU freq
-    }
-    else
-    {
-        // play sound on other channel
-        
-        // seriously need to consider adopting the interrupt and sound handling from Defender
-        // a lot neater than this, issues with which timers to use and the value for DMA2DAD
-    }
-}
 
 
-void DmaPlaySound (void)
-{
-	//Play a mono sound at 16khz in DMA mode Direct Sound
-	//uses timer 0 as sampling rate source
-	//uses timer 1 to count the samples played in order to stop the sound 
-	REG_SOUNDCNT_L=0;
-	REG_SOUNDCNT_H=0x0b0F;  //DS A&B + fifo reset + timer0 + max volume to L and R
-	REG_SOUNDCNT_X=0x0080;  //turn sound chip on
-	
-	REG_DMA1SAD=(unsigned long)token;	//dma1 source
-	REG_DMA1DAD=0x040000a0; //write to FIFO A address
-	REG_DMA1CNT_H=0xb600;	//dma control: DMA enabled+ start on FIFO+32bit+repeat
-	
-	// sample sizes
-	// rarg 14111
-	// explo 19472
-	// arg 20213
-	// token 16720
-	REG_TM1CNT_L=65535 - 16720;	    //0xffff-the number of samples to play
-	REG_TM1CNT_H=0xC4;		//enable timer1 + irq and cascade from timer 0
 
-	REG_IE=0x10;	  	    //enable irq for timer 1 overflow
-	REG_IME=1;				//enable interrupt
-	
-	//Formula for playback frequency is: 0xFFFF-round(cpuFreq/playbackFreq)
-	// ??? samples are 10146Hz
-	// timer count=65535-round(2^24/10146)=63882
-	REG_TM0CNT_L=65535 - (16777216/10146);	    //10146Hz playback freq
-	REG_TM0CNT_H=0x0080; 	//enable timer at CPU freq 
-}
-*/
 
-/*
-// these functions seem to break the build if compiler optimisations are turned on
-// thumb code for printing text to emulators debugger
-void dbprintthumb(char *s)
-{
- asm volatile("mov r0, %0;"
-              "swi 0xff;"
-              : // no ouput
-              : "r" (s)
-              : "r0");
-}
 
-// ARM code build for printing text to emulators debugger
-void dbprint(char *s)
-{
- asm volatile("mov r0, %0;"
-              "swi 0xff0000;"
-              : // no ouput
-              : "r" (s)
-              : "r0");
-}
-*/
 
 // wait for scanline to be off screen (before drawing to it)
 void wait()
@@ -814,7 +629,7 @@ int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
    
     // write the message, one more letter each time    
     int letCount;
-    u32 newX;
+    u32 newX = x; // init in case of empty string
     for(letCount = 1; letCount <= stringLength; letCount++)
     {
         *spriteNum = tempSpriteNum;
@@ -2112,7 +1927,7 @@ void initialiseLevel(void)
     // tile data appears to have to be loaded 16 bits at a time, why????
     u16* tileData = (u16*)background_Bitmap;
     //const unsigned char background_Bitmap
-    for(i=0; i<32*256; i++) tiles[i]=tileData[i];
+    for(i=0; i<15360/2; i++) tiles[i]=tileData[i];
     
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];

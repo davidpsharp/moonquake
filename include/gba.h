@@ -183,145 +183,18 @@ typedef u8 bool;
 #define REG_PAUSE      	(*(volatile u16*)0x4000300)
 
 
-// extra sound regs taken from Belogic's gba.h file
+
+
+// extra sound regs taken from Belogic's gba.h file for teletype sound
 
 typedef volatile unsigned short vu16;
 
-#define REG_SOUND1CNT   *(vu32*)0x4000060	//sound 1
+#define REG_SOUNDCNT_L *(vu16*)0x4000080	//DMG sound control
 #define REG_SOUND1CNT_L *(vu16*)0x4000060	//
 #define REG_SOUND1CNT_H *(vu16*)0x4000062	//
 #define REG_SOUND1CNT_X *(vu16*)0x4000064	//
 
-#define REG_SOUND2CNT_L *(vu16*)0x4000068		//sound 2 lenght & wave duty
-#define REG_SOUND2CNT_H *(vu16*)0x400006C		//sound 2 frequency+loop+reset
-
-#define REG_SG30       *(vu32*)0x4000070		//???
-#define REG_SOUND3CNT  *(vu32*)0x4000070		//???
-#define REG_SG30_L     *(vu16*)0x4000070		//???
-#define REG_SOUND3CNT_L *(vu16*)0x4000070	//???
-#define REG_SG30_H     *(vu16*)0x4000072		//???
-#define REG_SOUND3CNT_H *(vu16*)0x4000072	//???
-#define REG_SG31       *(vu16*)0x4000074		//???
-#define REG_SOUND3CNT_X *(vu16*)0x4000074	//???
-
-#define REG_SOUND4CNT_L *(vu16*)0x4000078		//???
-#define REG_SOUND4CNT_H *(vu16*)0x400007C		//???
-
-#define REG_SGCNT0     *(vu32*)0x4000080		
-#define REG_SGCNT0_L   *(vu16*)0x4000080		
-#define REG_SOUNDCNT   *(vu32*)0x4000080
-#define REG_SOUNDCNT_L *(vu16*)0x4000080		//DMG sound control
-
-#define REG_SGCNT0_H   *(vu16*)0x4000082		
-#define REG_SOUNDCNT_H *(vu16*)0x4000082		//Direct sound control
-
-#define REG_SGCNT1     *(vu16*)0x4000084		
-#define REG_SOUNDCNT_X *(vu16*)0x4000084	    //Extended sound control
-
-#define REG_SGBIAS     *(vu16*)0x4000088		
-#define REG_SOUNDBIAS  *(vu16*)0x4000088		//bit rate+sound bias
-
-#define REG_WAVE_RAM0  *(vu32*)0x4000090		//???
-#define REG_SGWR0_L    *(vu16*)0x4000090		//???
-#define REG_SGWR0_H    *(vu16*)0x4000092		//???
-#define REG_WAVE_RAM1  *(vu32*)0x4000094		//???
-#define REG_SGWR1_L    *(vu16*)0x4000094		//???
-#define REG_SGWR1_H    *(vu16*)0x4000096		//???
-#define REG_WAVE_RAM2  *(vu32*)0x4000098		//???
-#define REG_SGWR2_L    *(vu16*)0x4000098		//???
-#define REG_SGWR2_H    *(vu16*)0x400009A		//???
-#define REG_WAVE_RAM3  *(vu32*)0x400009C		//???
-#define REG_SGWR3_L    *(vu16*)0x400009C		//???
-#define REG_SGWR3_H    *(vu16*)0x400009E		//???
-
-// sound values from belogic's gba.h file too
-
-////////////////sound channels/////////////
-#define SOUNDINIT			0x8000	// makes the sound restart
-#define SOUNDDUTY87			0x0000	//87.5% wave duty
-#define SOUNDDUTY75			0x0040	//75% wave duty
-#define SOUNDDUTY50			0x0080	//50% wave duty
-#define SOUNDDUTY25			0x00C0	//25% wave duty
-
-#define SOUND1PLAYONCE		0x4000	// play sound once
-#define SOUND1PLAYLOOP		0x0000	// play sound looped
-#define SOUND1INIT			0x8000	// makes the sound restart
-#define SOUND1SWEEPSHIFTS(n)	n	// number of sweep shifts (0-7)
-#define SOUND1SWEEPINC		0x0000	// sweep add (freq increase)
-#define SOUND1SWEEPDEC		0x0008	// sweep dec (freq decrese)
-#define SOUND1SWEEPTIME(n)	(n<<4)	// time of sweep (0-7)
-#define SOUND1ENVSTEPS(n)	(n<<8)	// envelope steps (0-7)
-#define SOUND1ENVINC		0x0800	// envellope increase
-#define SOUND1ENVDEC		0x0000	// envellope decrease
-#define SOUND1ENVINIT(n)	(n<<12) // initial envelope volume (0-15)
 
 
-#define SOUND2PLAYONCE		0x4000	// play sound once
-#define SOUND2PLAYLOOP		0x0000	// play sound looped
-#define SOUND2INIT			0x8000	// makes the sound restart
-#define SOUND2ENVSTEPS(n)	(n<<8)	// envelope steps (0-7)
-#define SOUND2ENVINC		0x0800	// envellope increase
-#define SOUND2ENVDEC		0x0000	// envellope decrease
-#define SOUND2ENVINIT(n)	(n<<12) // initial envelope volume (0-15)
-
-
-
-#define SOUND3BANK32		0x0000	// Use two banks of 32 steps each
-#define SOUND3BANK64		0x0020	// Use one bank of 64 steps
-#define SOUND3SETBANK0		0x0000	// Bank to play 0 or 1 (non set bank is written to)
-#define SOUND3SETBANK1		0x0040
-#define SOUND3PLAY			0x0080	// Output sound
-
-#define SOUND3OUTPUT0		0x0000	// Mute output
-#define SOUND3OUTPUT1		0x2000	// Output unmodified
-#define SOUND3OUTPUT12		0x4000	// Output 1/2 
-#define SOUND3OUTPUT14		0x6000	// Output 1/4 
-#define SOUND3OUTPUT34		0x8000  // Output 3/4
-
-#define SOUND3PLAYONCE		0x4000	// Play sound once
-#define SOUND3PLAYLOOP		0x0000	// Play sound looped
-#define SOUND3INIT			0x8000	// Makes the sound restart
-
-
-#define SOUND4PLAYONCE		0x4000	// play sound once
-#define SOUND4PLAYLOOP		0x0000	// play sound looped
-#define SOUND4INIT			0x8000	// makes the sound restart
-#define SOUND4ENVSTEPS(n)	(n<<8)	// envelope steps (0-7)
-#define SOUND4ENVINC		0x0800	// envellope increase
-#define SOUND4ENVDEC		0x0000	// envellope decrease
-#define SOUND4ENVINIT(n)	(n<<12) // initial envelope volume (0-15)
-
-
-#define SOUND4STEPS7		0x0004
-#define SOUND4STEPS15		0x0000
-#define SOUND4PLAYONCE		0x4000
-#define SOUND4PLAYLOOP		0x0000
-#define SOUND4INIT			0x8000
-
-
-
-
-// extracts required for soundfx library taken from Defender's gba.h file
-
-
-
-typedef unsigned int uint;
-typedef unsigned int			BOOL;
-
-#define MEM_IO					0x04000000	// Register Base, all HW Registers are in here.
-
-#define R_INTENA		*(volatile u16 *)(MEM_IO + 0x200)			// Int Enable
-#define R_INTMST		*(volatile u16 *)(MEM_IO + 0x208)			// Int Enable Master
-
-#define R_SNDCNT2		*(volatile u16 *)(MEM_IO + 0x82)			// Direct sound control
-#define R_SNDCNT3		*(volatile u16 *)(MEM_IO + 0x84)			// Master Sound Control
-#define R_TIMER0		*(volatile u32 *)(MEM_IO + 0x100)			// Timer 0
-
-#define MEM_SNDFIFO_A	(MEM_IO + 0xA0)					// Sound FIFO A
-#define MEM_SNDFIFO_B	(MEM_IO + 0xA4)					// Sound FIFO B
-
-#define MEM_DMABASE		(MEM_IO + 0x0B0)				// DMA Control Base
-
-
-#endif
+#endif // GBA_HEADER
 
