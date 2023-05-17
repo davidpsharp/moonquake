@@ -1,3 +1,6 @@
+
+
+
 // before release
 // ==============
 // timings with Acorn version, should feel similar speed on gba hardware
@@ -33,6 +36,18 @@
 // should OAM be volatile in the sprites.h file?
 // split up code into multiple files
 
+
+
+#include <gba.h>
+#include <maxmod.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "soundbank.h"
+#include "soundbank_bin.h"
+ 
+
 // include graphics data
 extern const unsigned short background_Palette[256];
 extern const unsigned char background_Bitmap[15360];
@@ -45,27 +60,7 @@ extern const unsigned char credits_Bitmap[38400];
 
 
 
-// include libraries and macros
-// TODO: this is currently devKitAdvance era manually copied header, move to libgba ASAP
-/*
-#include "gba.h"
-#include "screenmodes.h"
-#include "sprites.h"
-#include "keypad.h"
-*/
 
-// libgba header
-#include <gba.h>
-#include <maxmod.h>
-
-// added per linksoundtext.c - causes some errors to occur
-//#include <stdio.h>
-//#include <stdlib.h>
-
-
-// include sound fx data (these files generated in build folder as per Makefile from assets in maxmod_data/ )
-#include "soundbank.h"
-#include "soundbank_bin.h"
 
 // definitions carried from old gba headers from devKitAdvance until makes sense to shift to the new
 // gba
@@ -115,7 +110,6 @@ extern const unsigned char credits_Bitmap[38400];
 //#define WIN2ENABLE     0x4000        //Enable window 2
 //#define WINOBJENABLE   0x8000        //Enable object window
 #define SetMode(mode)    (REG_DISPCNT = mode)
-
 
 
 
@@ -309,7 +303,23 @@ mm_sound_effect token = {
     255,	// panning
 };
 
-int inDevelopment = 1; // remove title screens to get to action faster for code-test cycle
+mm_sound_effect rarg = {
+    { SFX_RARG } ,			// id
+    (int)(1.0f * (1<<10)),	// rate
+    0,		// handle
+    255,	// volume
+    255,	// panning
+};
+
+mm_sound_effect arg = {
+    { SFX_ARG } ,			// id
+    (int)(1.0f * (1<<10)),	// rate
+    0,		// handle
+    255,	// volume
+    255,	// panning
+};
+
+int inDevelopment = 0; // remove title screens to get to action faster for code-test cycle
 
 int vblankTest = 0;
 
@@ -324,15 +334,18 @@ int strlen(const char*);
 
 
 
-
-
-
-
+// TODO: could replace these REG_VCOUNT==160 checks with SWI 0x05 which waits for vsync?
 
 // wait for scanline to be off screen (before drawing to it)
 void wait()
 {
 	while( REG_VCOUNT < 160 );
+}
+
+// wait until any key pressed until return
+void waitForKeyPress()
+{
+    for( ; !((~KEYS) & 0x3FF) ; ) { mmFrame(); VBlankIntrWait(); }
 }
 
 // put in a delay a certain number of vsyncs, note ~60 vsyncs per second so delay(120) waits for about 2 secs
@@ -345,6 +358,8 @@ void delay(int numOfVSyncs)
         // wait until off 160 again otherwise immediately exits as the for loop will cycle away 
         // during the one HSync
         while( REG_VCOUNT == 160 );
+
+        mmFrame();
     }
 }
 
@@ -371,6 +386,8 @@ void delayOrKeypress(int numOfVSyncs)
         
         // wait to be off 160 before testing first loop result again
         while( REG_VCOUNT == 160 );
+
+        mmFrame();
     }
 }
 
@@ -729,11 +746,7 @@ int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
     return newX;
 }
 
-// wait until any key pressed until return
-void waitForKeyPress()
-{
-    for( ; !((~KEYS) & 0x3FF) ; );
-}
+
 
 // simple fade of the 256 colour palette to black (i.e. doesn't fade proportional to brightness, which would need LUT)
 void fadeToBlack()
@@ -1043,22 +1056,22 @@ void pauseActivated()
             currentPalette = OBJPaletteMem;
         }
         
-        /*
+        
         // Alternative fade out that just dims the colours instead of greying them
-        const int fadeFactor = 4;
-        for(i=0; i< NUM_COLOURS_USED_IN_BACKGROUND_PALETTE; i++)
-        {
-            u16 currentColour = currentPalette[i];
-            u8 currentGreen = (currentColour & 0x3E0) >> 5;
-            u8 currentBlue = (currentColour & 0x7C00) >> 10;
-            u8 currentRed = currentColour & 0x1F;
-            // don't fade any colour components if they would go -ve (of course in an unsigned var goes high +ve)
-            if(currentGreen >= fadeFactor) currentGreen -= fadeFactor;
-            if(currentBlue >= fadeFactor) currentBlue -= fadeFactor;
-            if(currentRed >= fadeFactor) currentRed -= fadeFactor;
-            currentPalette[i] = currentRed | (currentGreen << 5) | (currentBlue << 10);
-        }
-        */
+        //const int fadeFactor = 4;
+        //for(i=0; i< NUM_COLOURS_USED_IN_BACKGROUND_PALETTE; i++)
+        //{
+        //    u16 currentColour = currentPalette[i];
+        //    u8 currentGreen = (currentColour & 0x3E0) >> 5;
+        //    u8 currentBlue = (currentColour & 0x7C00) >> 10;
+        //    u8 currentRed = currentColour & 0x1F;
+        //    // don't fade any colour components if they would go -ve (of course in an unsigned var goes high +ve)
+        //    if(currentGreen >= fadeFactor) currentGreen -= fadeFactor;
+        //    if(currentBlue >= fadeFactor) currentBlue -= fadeFactor;
+        //    if(currentRed >= fadeFactor) currentRed -= fadeFactor;
+        //    currentPalette[i] = currentRed | (currentGreen << 5) | (currentBlue << 10);
+        //}
+        
         
         // greyscale the tile palette
         
@@ -1087,11 +1100,11 @@ void pauseActivated()
     copyAllOAM();
     
     // wait for player to release the start button that they pressed to trigger the pause
-    for( ; KEY_DOWN( KEYSTART) ; );
+    for( ; KEY_DOWN( KEYSTART) ; ) { mmFrame(); VBlankIntrWait(); }
     
     // wait for player to press (and release) the start button again to unpause
-    for( ; !KEY_DOWN( KEYSTART ) ; );
-    for( ; KEY_DOWN( KEYSTART ) ; );
+    for( ; !KEY_DOWN( KEYSTART ) ; ) { mmFrame(); VBlankIntrWait(); }
+    for( ; KEY_DOWN( KEYSTART ) ; ) { mmFrame(); VBlankIntrWait(); }
     
     // remove the pause banner
     int letCount;
@@ -1310,7 +1323,8 @@ void moveMan()
             // start dying
             
             //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
-            
+            mmEffectEx(&arg);
+
             lifeStatus = DYING;
             manFrame = 0;           // set to first frame of dying animation
             drawSprite(OAM_GMAN, S_MAN_EXPLO_START, manX - xOffset, manY - yOffset);
@@ -1351,6 +1365,7 @@ void moveMan()
             {      
                 lifeStatus = DYING;
                 //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
+                mmEffectEx(&arg);
                 manFrame = 0;           // set to first frame of dying animation
                 drawSprite(OAM_GMAN, S_MAN_EXPLO_START, manX - xOffset, manY - yOffset);
                 return;
@@ -1361,14 +1376,14 @@ void moveMan()
     // if player moving (i.e. inbetween squares)
     if( manDirectionX || manDirectionY)
     { 
-    	if( !(universalTimer % 2) )
+    	//q if( !(universalTimer % 2) )
     	{
     		
 	        // if moving horizontally 
 	        if(manDirectionX)
 	        {
-	            // adjust position 1 pixel
-	            manX += manDirectionX;
+	            // adjust position 2 pixel
+	            manX += manDirectionX*2;
 	            
 	            // if have reached the boundary of a tile then stop moving
 	            if( !(manX % 16) )
@@ -1381,8 +1396,8 @@ void moveMan()
 	        }
 	        else
 	        {
-	            // adjust position 1 pixel
-	            manY += manDirectionY;
+	            // adjust position 2 pixel
+	            manY += manDirectionY*2;
 	            
 	            // if have reached the boundary of a tile then stop moving
 	            if( !(manY % 16) )
@@ -1593,7 +1608,8 @@ void checkExplodingRubble(u8 x, u8 y)
 // check whether a bomb needs to be detonated
 void checkBomb(u8 x, u8 y)
 {
-    if(!(universalTimer % 10) )
+    //if(!(universalTimer % 10) )
+    if(!(universalTimer % 5) )
     {
         bombVal[x][y]--; // next stage
         
@@ -1624,7 +1640,7 @@ void checkExplosion(u8 x, u8 y)
             return;
     }
     
-    if(!(universalTimer % 2) )
+    //if(!(universalTimer % 2) )
     {
         // move to next stage of explosion
         area[x][y]+=4;
@@ -1768,7 +1784,8 @@ void moveRobots()
                     // start robot dying animation
                     robot[i].move = FALSE;
                     robot[i].dead = DYING;
-                    //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_RARG);
+                    //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_RARG); 
+                    mmEffectEx(&rarg);
                 }
                                 
                 // if robot moving then adjust coords
@@ -2525,10 +2542,11 @@ int handleDeath(void)
 // main game loop
 void gameLoop(void)
 {
+    
     // infinite loop
     for( ; ; )
     {
-        
+
         // check for all rubble gone
         if( rubbleCount <= 0 )
         {
@@ -2552,7 +2570,7 @@ void gameLoop(void)
         int x,y;
                 
         // only do these checks every nth cycle through the loop
-        if( !(universalTimer % 5) )
+        //if( (universalTimer % 3) == 0)
         {
             
             // tile scan whole area
@@ -2633,6 +2651,7 @@ void gameLoop(void)
                 drawObject(manX / 16, manY / 16, T_SPACE);
                 
                 //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
+                mmEffectEx(&token);
                 
                 switch( giftType )
                 {
@@ -2690,17 +2709,18 @@ void gameLoop(void)
         // move robots after man so that offset vars have been updated
         moveRobots();
         
+        // maxmod soundfx update
+        mmFrame();
+
         // update display
-        
-        wait();
+        //wait();
+        VBlankIntrWait(); // swapping this in for wait() kills speed but sound samples are great!
+
         // update background scrolling positions
         REG_BG1HOFS = xOffset;
         REG_BG1VOFS = yOffset;
         // copy main game sprites positions (man, halo, monsters) to the screen
         copyGameOAM();
-
-        // maxmod soundfx update
-        mmFrame();
         
     } // loop forever      
 }
@@ -2729,13 +2749,13 @@ void displayText()
     
     SetMode(SCREENMODE1 | BG1ENABLE | OBJENABLE | OBJMAP1D );
     
-    /*
+    
     // display pretty much all the text
-    u32 spriteNum = 0;
-    writeText(10,30, "ABCDEFGHIJKLMNOPQRS", &spriteNum);
-    writeText(10,50, "TUVWXYZ1234567890", &spriteNum);
-    writeText(10,70, ":,./", &spriteNum);
-    */
+    //u32 spriteNum = 0;
+    //writeText(10,30, "ABCDEFGHIJKLMNOPQRS", &spriteNum);
+    //writeText(10,50, "TUVWXYZ1234567890", &spriteNum);
+    //writeText(10,70, ":,./", &spriteNum);
+    
     
     
     u32 spriteNum = 0;
@@ -2748,8 +2768,8 @@ void displayText()
     waitForKeyPress();
     
     // ??? experiment, playing around trying to save values to battery RAM, why doesn't it work?
-    //*SRAM = 1;
-    //(SRAM[1]) = 2;
+    // *SRAM = 1;
+    // (SRAM[1]) = 2;
     
     fadeToBlack();
     turnOffAllSprites();
@@ -2882,24 +2902,10 @@ void onVBlank() {
 }
 
 
-// badly hacked out of libtonc bios .s try again... doesn't return!
-// BROKEN
-void VBlankIntrWaitDS(void)
-{
-    /*
-    asm volatile("swi		0x05;"
-              "bx		lr;"
-              : : :
-              );
-    */
-}
-
-#define KEY_A			0x0001	//!< Button A
-#define KEY_B			0x0002	//!< Button B
-
-void soundTest()
-{
-   	irqInit();
+/*
+int soundTest3() {
+    
+	irqInit();
 
 	// Maxmod requires the vblank interrupt to reset sound DMA.
 	// Link the VBlank interrupt to mmVBlank, and enable it. 
@@ -2907,17 +2913,10 @@ void soundTest()
 
 	irqEnable(IRQ_VBLANK);
 
-	consoleDemoInit();
-
-	// ansi escape sequence to clear screen and home cursor
-	// /x1b[line;columnH
-	iprintf("\x1b[2J");
-
-	// initialise maxmod with soundbank and 8 channels
+    	// initialise maxmod with soundbank and 8 channels
     mmInitDefault( (mm_addr)soundbank_bin, 8 );
 
-    // redefine locally to ensure not using globals
-	mm_sound_effect exploX = {
+	mm_sound_effect explo = {
 		{ SFX_EXPLO } ,			// id
 		(int)(1.0f * (1<<10)),	// rate
 		0,		// handle
@@ -2925,76 +2924,22 @@ void soundTest()
 		255,	// panning
 	};
 
-	mm_sound_effect tokenX = {
-		{ SFX_TOKEN } ,			// id
-		(int)(1.0f * (1<<10)),	// rate
-		0,		// handle
-		255,	// volume
-		255,	// panning
-	};
+    mmEffectEx(&explo);
 
-	// ansi escape sequence to clear screen and home cursor
-	// /x1b[line;columnH
-	iprintf("\x1b[2J");
-	// ansi escape sequence to set print co-ordinates
-	// /x1b[line;columnH
-	iprintf("\x1b[0;4Hmoonquake sound test");
-	iprintf("\x1b[3;0HHold A for token sound");
-	iprintf("\x1b[4;0HPress B for explo sound");
-    
-	// sound effect handle (for cancelling it later)
-	mm_sfxhand amb = 0;
-
-    int keyPress = 0;
-
-    mmEffectEx(&explo); // makes a sound but not for long - why different to my isolated sound test code
-
-	do {
-
-		int keys_pressed, keys_released;
-		        
-		// VBlankIntrWaitDS(); // broken
+    do {
 		
-        wait(); // poor mans poll of vblank
+		VBlankIntrWait();
 
-        mmFrame();
-	 
-		scanKeys();
-
-		keys_pressed = keysDown();
-		keys_released = keysUp();
-
-
-		// Play looping ambulance sound effect out of left speaker if A button is pressed
-		if ( keys_pressed & KEY_A ) {
-            keyPress = 1;
-			amb = mmEffectEx(&tokenX);
-		}
-
-		// stop ambulance sound when A button is released
-		if ( keys_released & KEY_A ) {
-			mmEffectCancel(amb);
-		}
-
-		// Play explosion sound effect out of right speaker if B button is pressed
-		if ( keys_pressed & KEY_B ) {
-            keyPress = 1;
-			mmEffectEx(&exploX);
-		}
-
-        if(keyPress)
-        {
-            iprintf("\x1b[5;0HPressed");
-            keyPress = 0; // reset
-        }
+		mmFrame();
+	 	
 	} while( 1 );
-}
 
+}
+*/
 
 int main(void)
 {
     
-    //soundTest();
     
     // debug build text, comment this out in release builds
     //displayText();
@@ -3009,8 +2954,6 @@ int main(void)
     int i;
     for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
     
-   
-
     // init sound fx
     irqInit();
 
@@ -3022,7 +2965,6 @@ int main(void)
 
     // initialise maxmod with soundbank and 8 channels
     mmInitDefault( (mm_addr)soundbank_bin, 8 );
-
 
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
@@ -3051,19 +2993,16 @@ int main(void)
 
         fadeOutSprites(OAM_LETTERS, spriteNum-1);
         
-        /*
-        turnOffAllSprites();
-                
-        // remove old competition message now it's 19 years ago...
-        spriteNum = OAM_LETTERS;
-        writeText(-1, 40, "COMPETITION ENTRY IN", &spriteNum);
-        writeText(-1, 60, "GBAX.COM 2004", &spriteNum);
-        writeText(-1, 110, "WWW.GBAEMU.COM", &spriteNum);
         
-        copyAllOAM();
+        //turnOffAllSprites();      
+        //// remove old competition message now it's 19 years ago...
+        //spriteNum = OAM_LETTERS;
+        //writeText(-1, 40, "COMPETITION ENTRY IN", &spriteNum);
+        //writeText(-1, 60, "GBAX.COM 2004", &spriteNum);
+        //writeText(-1, 110, "WWW.GBAEMU.COM", &spriteNum);
+        //copyAllOAM();
+        //delayOrKeypress(300);
         
-        delayOrKeypress(300);
-        */
 
         fadeToBlack();
     }
@@ -3165,6 +3104,9 @@ int main(void)
                 
                 if(dirKeyPressed)
                 {
+
+                    mmEffectEx(&explo);
+                    
                     buttonReleased = 0;
                     
                     fadeValue = 0;
@@ -3187,6 +3129,9 @@ int main(void)
                 // delay and update display
                 
                 delay(2);
+
+                mmFrame();
+
                 BrightnessSetLevel(fadeValue);
                 copySelectOAM(OAM_LETTERS, spriteNum);
                 
@@ -3196,6 +3141,8 @@ int main(void)
                 {
                     buttonReleased = 1;
                 }
+
+                
             }
             
             BrightnessEnd();        
@@ -3207,6 +3154,7 @@ int main(void)
             
             // load sprite palette
             for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+            
         } // end of menu system, now act on it...
         else
         {
@@ -3257,6 +3205,18 @@ void LoadRaw (u16 offset, u8* rawdata, u16 size)
        temp [loop] = *(u8 *)(SRAM + offset + loop);
    }
 } 
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
