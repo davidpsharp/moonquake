@@ -61,7 +61,7 @@ typedef struct tagRotData
 }RotData,*pRotData;
 
 u16* OAM = (u16*)0x7000000;
-OAMEntry sprites[128];
+
 pRotData rotData = (pRotData)sprites;
 
 #endif

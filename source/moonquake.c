@@ -7,6 +7,7 @@
 // to do list
 // =============
 // display score
+// sometimes see dead person sprites appear periodically - never seen before, dodgy copy/init of OAM RAM having changed type
 // cheat menu from the start menu for debugging the gameplay
 // sometimes clear levels don't end, something to do with user dying??
 // need text to type everything on that screen if button pressed
@@ -46,17 +47,72 @@ extern const unsigned char credits_Bitmap[38400];
 
 // include libraries and macros
 // TODO: this is currently devKitAdvance era manually copied header, move to libgba ASAP
+/*
 #include "gba.h"
 #include "screenmodes.h"
 #include "sprites.h"
 #include "keypad.h"
+*/
 
-
+// libgba header
+#include <gba.h>
 #include <maxmod.h>
 
 // include sound fx data (these files generated in build folder as per Makefile from assets in maxmod_data/ )
 #include "soundbank.h"
 #include "soundbank_bin.h"
+
+// definitions carried from old gba headers from devKitAdvance until makes sense to shift to the new
+// gba
+#define REG_BLDMOD     	(*(volatile u16*)0x4000050)
+#define REG_COLEV      	(*(volatile u16*)0x4000052)
+#define REG_COLEY      	(*(volatile u16*)0x4000054)
+#define OBJPaletteMem 	((volatile u16*)0x5000200)
+#define VideoBuffer 	((volatile u16*)0x6000000)
+#define OAMdata 	    ((volatile u16*)0x6010000)
+#define SRAM            ((volatile u8*)0xE000000)
+#define TRUE 1
+#define FALSE 0
+// keys
+#define KEYA             1
+#define KEYB             2
+#define KEYSELECT        4
+#define KEYSTART         8
+#define KEYRIGHT         16
+#define KEYLEFT          32
+#define KEYUP            64
+#define KEYDOWN          128
+#define KEYR             256
+#define KEYL             512
+#define KEYS             (*(volatile u16*)0x4000130)
+#define KEY_DOWN(k)       ( ! ( ( KEYS ) & k ) )
+// sprites
+#define COLOR_256		0x2000
+#define SIZE_16			0x4000
+// screenmodes
+#define SCREENMODE0    0x0           //Enable screen mode 0
+#define SCREENMODE1    0x1           //Enable screen mode 1
+#define SCREENMODE2    0x2           //Enable screen mode 2
+#define SCREENMODE3    0x3           //Enable screen mode 3
+#define SCREENMODE4    0x4           //Enable screen mode 4
+//#define SCREENMODE5    0x5           //Enable screen mode 5
+//#define BACKBUFFER     0x10          //Determine backbuffer
+//#define HBLANKOAM      0x20          //Update OAM during HBlank?
+#define OBJMAP2D       0x0           //2D object (sprite) mapping
+#define OBJMAP1D       0x40          //1D object(sprite) mapping
+//#define FORCEBLANK     0x80          //Force a blank
+#define BG0ENABLE      0x100         //Enable background 0
+#define BG1ENABLE      0x200         //Enable background 1
+#define BG2ENABLE      0x400         //Enable background 2
+//#define BG3ENABLE      0x800         //Enable background 3
+#define OBJENABLE      0x1000        //Enable sprites
+//#define WIN1ENABLE     0x2000        //Enable window 1
+//#define WIN2ENABLE     0x4000        //Enable window 2
+//#define WINOBJENABLE   0x8000        //Enable object window
+#define SetMode(mode)    (REG_DISPCNT = mode)
+
+
+
 
 
 // define tile names (multiples of 4)
@@ -160,6 +216,9 @@ extern const unsigned char credits_Bitmap[38400];
 u16 *pal=(u16*)0x5000000;           // background palette
 u16 *tiles=(u16*)0x6004000;         // background tiles
 u16 *m0=(u16*)0x6000000;            // background map
+
+OBJATTR sprites[128];
+
 #define OAMData			((u16*)0x6010000)
 
 // width in pixels of letters (measured at their widest), excluding the rightmost edge of single black pixels since they overlap
@@ -245,7 +304,7 @@ mm_sound_effect token = {
     255,	// panning
 };
 
-int inDevelopment = 0; // remove title screens to get to action faster for code-test cycle
+int inDevelopment = 1; // remove title screens to get to action faster for code-test cycle
 
 int vblankTest = 0;
 
@@ -406,8 +465,8 @@ void initSprites(void)
 	u16 loop;
 	for(loop = 0; loop < 128; loop++)
 	{
-	    sprites[loop].attribute0 = COLOR_256 | 256; //y to > 159
-        sprites[loop].attribute1 = SIZE_16 | 256;   //x to > 239
+	    sprites[loop].attr0 = COLOR_256 | 256; //y to > 159
+        sprites[loop].attr1 = SIZE_16 | 256;   //x to > 239
 	}
 	
 	copyAllOAM();
@@ -427,16 +486,16 @@ void drawSprite(u16 spriteNumber, u16 charNumber, s16 x, s16 y)
     // REG_COLEV = 0xc07;
     
     // just use normal sprite
-    sprites[spriteNumber].attribute0 = COLOR_256 | y | SQUARE;
-    sprites[spriteNumber].attribute1 = SIZE_16 | x;
-    sprites[spriteNumber].attribute2 = charNumber;
+    sprites[spriteNumber].attr0 = COLOR_256 | y | SQUARE;
+    sprites[spriteNumber].attr1 = SIZE_16 | x;
+    sprites[spriteNumber].attr2 = charNumber;
 }
 
 // set single sprite to be off display (don't update OAM)
 void turnOffSprite(u8 spriteNumber)
 {
-    sprites[spriteNumber].attribute0 = COLOR_256 | 256;
-    sprites[spriteNumber].attribute1 = SIZE_16 | 256;
+    sprites[spriteNumber].attr0 = COLOR_256 | 256;
+    sprites[spriteNumber].attr1 = SIZE_16 | 256;
 }
 
 // set all sprites to be off display (but don't update OAM)
@@ -480,8 +539,8 @@ void BrightnessSetSpritesInactive(int firstSprite, int lastSprite)
 	int sprCount;
 	for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
     {
-        sprites[sprCount].attribute0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
-        sprites[sprCount].attribute0 |= 1 << 10;	// set to semi-transparent mode
+        sprites[sprCount].attr0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
+        sprites[sprCount].attr0 |= 1 << 10;	// set to semi-transparent mode
     }
 }
 
@@ -492,7 +551,7 @@ void BrightnessSetSpritesActive(int firstSprite, int lastSprite)
 	int sprCount;
     for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
     {
-        sprites[sprCount].attribute0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
+        sprites[sprCount].attr0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
     }
 }
 
@@ -832,7 +891,7 @@ void fadeOutSprites(int firstSprite, int lastSprite)
     int sprCount;
     for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
     {
-        sprites[sprCount].attribute0 |= 0x400; // enable antialiasing
+        sprites[sprCount].attr0 |= 0x400; // enable antialiasing
     }
     
     copySelectOAM(firstSprite, lastSprite);
@@ -1343,7 +1402,7 @@ void detonateBomb(u8 x, u8 y)
     // explosion or just decays improperly?
     
     //SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
-    mmEffectEx(&explo);
+    //mmEffectEx(&explo);
     
     bombsCurrentlyDropped--;
     
@@ -1562,7 +1621,7 @@ void checkExplosion(u8 x, u8 y)
     
     if(!(universalTimer % 2) )
     {
-        // if the tile is an explosion tile
+        // move to next stage of explosion
         area[x][y]+=4;
         
         // if strayed into sequence for next orientation of explosion then explosion over
@@ -2888,7 +2947,7 @@ void soundTest()
 	do {
 
 		int keys_pressed, keys_released;
-        
+		        
 		// VBlankIntrWaitDS(); // broken
 		
         wait(); // poor mans poll of vblank
@@ -2930,7 +2989,7 @@ void soundTest()
 int main(void)
 {
     
-    soundTest();
+    //soundTest();
     
     // debug build text, comment this out in release builds
     //displayText();
@@ -3009,7 +3068,7 @@ int main(void)
     {
         int selected = 0;
 
-        // go straight into 1-player game if dev-testing
+        // go straight into game if dev-testing
         if(!inDevelopment)
         {
 
@@ -3144,6 +3203,10 @@ int main(void)
             // load sprite palette
             for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
         } // end of menu system, now act on it...
+        else
+        {
+            selected = 1; // in at the deep end for development mode
+        }
 
         switch(selected)
         {

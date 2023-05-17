@@ -8,7 +8,11 @@
 		"files.associations": {
 			"soundbank.h": "c",
 			"soundbank_bin.h": "c",
-			"maxmod.h": "c"
+			"maxmod.h": "c",
+			"gba.h": "c",
+			"gba_sprites.h": "c",
+			"gba_input.h": "c",
+			"gba_video.h": "c"
 		}
 	}
 }
