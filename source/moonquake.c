@@ -58,6 +58,11 @@ extern const unsigned char credits_Bitmap[38400];
 #include <gba.h>
 #include <maxmod.h>
 
+// added per linksoundtext.c - causes some errors to occur
+//#include <stdio.h>
+//#include <stdlib.h>
+
+
 // include sound fx data (these files generated in build folder as per Makefile from assets in maxmod_data/ )
 #include "soundbank.h"
 #include "soundbank_bin.h"
@@ -70,7 +75,7 @@ extern const unsigned char credits_Bitmap[38400];
 #define OBJPaletteMem 	((volatile u16*)0x5000200)
 #define VideoBuffer 	((volatile u16*)0x6000000)
 #define OAMdata 	    ((volatile u16*)0x6010000)
-#define SRAM            ((volatile u8*)0xE000000)
+//#define SRAM            ((volatile u8*)0xE000000)
 #define TRUE 1
 #define FALSE 0
 // keys
@@ -312,9 +317,9 @@ int vblankTest = 0;
 
 
 // prototype the various ANSI functions to prevent implicit declaration warnings later
-int rand(void);
+//int rand(void);
 int strlen(const char*);
-void srand(int);
+//void srand(int);
 
 
 
@@ -1402,7 +1407,7 @@ void detonateBomb(u8 x, u8 y)
     // explosion or just decays improperly?
     
     //SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
-    //mmEffectEx(&explo);
+    mmEffectEx(&explo);
     
     bombsCurrentlyDropped--;
     
@@ -2743,8 +2748,8 @@ void displayText()
     waitForKeyPress();
     
     // ??? experiment, playing around trying to save values to battery RAM, why doesn't it work?
-    *SRAM = 1;
-    (SRAM[1]) = 2;
+    //*SRAM = 1;
+    //(SRAM[1]) = 2;
     
     fadeToBlack();
     turnOffAllSprites();
