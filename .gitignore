@@ -1,7 +1,7 @@
 
 # devKitARM GBA specifics
 *.sav
-*.gba
+# *.gba # publish ROM image until I have proper build pipeline setup
 .build/
 
 # MaxMod generated files at Make time
