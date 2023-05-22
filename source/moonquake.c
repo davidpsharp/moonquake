@@ -46,6 +46,8 @@
 
 #include "soundbank.h"
 #include "soundbank_bin.h"
+
+#include "link_connection.h"
  
 
 // include graphics data
@@ -318,6 +320,8 @@ mm_sound_effect arg = {
     255,	// volume
     255,	// panning
 };
+
+LinkConnection conn;
 
 int inDevelopment = 0; // remove title screens to get to action faster for code-test cycle
 
@@ -2897,8 +2901,11 @@ void startGameAndManageContinues()
 }
 
 void onVBlank() {
-  //vblankTest++; // ??? i have tested and this is getting set
-  mmVBlank(); // maxmod sound sample library update
+    //vblankTest++; // ??? i have tested and this is getting set
+    mmVBlank(); // maxmod sound sample library update
+
+    // could get called before connected - is that ok?
+    lc_on_vblank(&conn);
 }
 
 
@@ -2936,6 +2943,114 @@ int soundTest3() {
 
 }
 */
+
+void onSerial() {
+    lc_on_serial(&conn);
+}
+
+void onTimer() {
+    lc_on_timer(&conn);
+}
+
+void multiPlayer()
+{
+
+	// (1) Create a LinkConnection instance
+	LinkConnectionSettings settings = {
+		.baud_rate = BAUD_RATE_1,
+		.timeout = 3,
+		.remote_timeout = 5,
+		.buffer_len = 30,
+		.interval = 50,
+		.send_timer_id = 3,
+	};
+
+	conn = lc_init(settings);
+
+	//irqInit(); already done
+
+	// Maxmod requires the vblank interrupt to reset sound DMA.
+	// Link the VBlank interrupt to mmVBlank, and enable it. 
+	//irqSet( IRQ_VBLANK, onVBlank ); already done
+	irqSet( IRQ_SERIAL, onSerial );
+	irqSet( IRQ_TIMER3, onTimer );
+
+	//irqEnable(IRQ_VBLANK); already done
+	irqEnable(IRQ_SERIAL);
+	irqEnable(IRQ_TIMER3);
+
+	// (3) Initialize the library
+	lc_activate(&conn);
+
+	u16 data[LINK_MAX_PLAYERS] = {};
+  	char str[128] = {'\0'};
+
+	consoleDemoInit();
+
+	// ansi escape sequence to clear screen and home cursor
+	// /x1b[line;columnH
+	iprintf("\x1b[2J");
+
+	// ansi escape sequence to set print co-ordinates
+	// /x1b[line;columnH
+	iprintf("\x1b[0;4Hmoonquake multiplayer");
+	iprintf("\x1b[3;0HHold A for ambulance sound");
+
+	do {
+
+		int keys_pressed, keys_released;
+		
+		VBlankIntrWait();
+		
+		mmFrame();
+	 
+		scanKeys();
+
+		keys_pressed = keysDown();
+		keys_released = keysUp();
+
+		// (4) Send/read messages
+		u16 keys = ~keys_pressed; //& KEY_ANY;
+		u16 message = keys + 1;
+		lc_send(&conn, message);
+
+		if (lc_is_connected(&conn)) {
+		  
+		  iprintf("\x1b[5;0HConnected");
+
+/*
+		  sprintf(str, "Players: %d\n", conn.state.player_count);
+		  tte_write(str);
+*/
+
+		  for (int id = 0; id < conn.state.player_count; id++) {
+		    
+		    while (lc_has_message(&conn, id)) {
+		      data[id] = lc_read_message(&conn, id) - 1;
+		    }
+		    
+		    sprintf(str, "\x1b[6;0HPlayers %d: %d     \n", id, data[id]); // overwriting player 0-2 data on screen so doesn't go cleanly
+		    iprintf(str);
+		    
+		  }
+		  
+		  sprintf(str, "\x1b[7;0HSent: %d    \nSelf pID: %d    \n", message, conn.state.current_player_id);
+		  iprintf(str);
+		  
+		}
+		else {
+			iprintf("\x1b[5;0HWaiting");
+		  //sprintf(str, "Waiting...\n");
+		  //tte_write("Waiting...");
+		}
+
+
+
+	} while( 1 );
+
+
+
+}
 
 int main(void)
 {
@@ -3028,12 +3143,16 @@ int main(void)
             
             displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
             
+            const int numberOfOptions = 4;
+
             u32 spriteNum = OAM_LETTERS;
             writeText(-1, 40, "START GAME", &spriteNum);
             u32 firstSpriteOfDeepEnd = spriteNum;
             writeText(-1, 60, "IN AT THE DEEP END", &spriteNum);
             u32 firstSpriteOfInstructions = spriteNum;
             writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
+            u32 firstSpriteOfMultiplayer = spriteNum;
+            writeText(-1, 100, "MULTIPLAYER", &spriteNum);
             
             // cycle the brightness of selected letters
             // for brightness adjust the sprites appear to have to be in semi-transparent mode
@@ -3047,7 +3166,8 @@ int main(void)
             
             BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd - 1);
             BrightnessSetSpritesInactive(firstSpriteOfDeepEnd, firstSpriteOfInstructions - 1);
-            BrightnessSetSpritesInactive(firstSpriteOfInstructions, spriteNum - 1);
+            BrightnessSetSpritesInactive(firstSpriteOfInstructions, firstSpriteOfMultiplayer - 1);
+            BrightnessSetSpritesInactive(firstSpriteOfMultiplayer, spriteNum - 1);
             
             // flags whether the last button press detected has been released (to force discrete button
             // press and not have to time for auto-repeat)
@@ -3085,7 +3205,7 @@ int main(void)
                 {                        
                     if( KEY_DOWN(KEYDOWN) )
                     {
-                        selected = (selected + 1) % 3;
+                        selected = (selected + 1) % numberOfOptions;
                         
                         dirKeyPressed = 1;
                     }
@@ -3095,7 +3215,7 @@ int main(void)
                         
                         if(selected < 0)
                         {
-                            selected = 2;
+                            selected = numberOfOptions-1; // go to last option
                         }
                         
                         dirKeyPressed = 1;
@@ -3119,7 +3239,8 @@ int main(void)
                     {
                         case 0 : BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd-1); break;
                         case 1 : BrightnessSetSpritesActive(firstSpriteOfDeepEnd, firstSpriteOfInstructions-1); break;
-                        case 2 : BrightnessSetSpritesActive(firstSpriteOfInstructions, spriteNum-1); break;
+                        case 2 : BrightnessSetSpritesActive(firstSpriteOfInstructions, firstSpriteOfMultiplayer-1); break;
+                        case 3 : BrightnessSetSpritesActive(firstSpriteOfMultiplayer, spriteNum-1); break;
                     }
                     
                     dirKeyPressed = 0;
@@ -3154,7 +3275,7 @@ int main(void)
             
             // load sprite palette
             for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
-            
+
         } // end of menu system, now act on it...
         else
         {
@@ -3166,6 +3287,7 @@ int main(void)
             case 0: startLevel = 0; startGameAndManageContinues(); break;
             case 1: startLevel = 7; startGameAndManageContinues(); break;
             case 2: displayStory(); break;
+            case 3: multiPlayer(); break;
         }
         
     }

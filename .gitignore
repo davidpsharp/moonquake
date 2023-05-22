@@ -1,7 +1,9 @@
 
 # devKitARM GBA specifics
 *.sav
-# *.gba # publish ROM image until I have proper build pipeline setup
+# save file from a second emulated GBA when doing multi-link testing
+*.sa2
+# *.gba # will publish ROM image until I have proper build pipeline setup
 .build/
 
 # MaxMod generated files at Make time
