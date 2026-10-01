@@ -43,11 +43,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "soundbank.h"
 #include "soundbank_bin.h"
 
-#include "link_connection.h"
+#include "link.h"
  
 
 // include graphics data
@@ -144,8 +145,6 @@ extern const unsigned char credits_Bitmap[38400];
 #define T_GIFTBOMB                  228
 #define T_GIFTFLAME                 232
 #define T_GIFTSURPRISE              236
-// ??? idea - if 2 players have 2 sets of bomb sprites are used one for each player so that when a bomb detonates, the appropriate player's
-// count of the number of bombs that they can drop is adjusted, otherwise have to store separate dataset for every tile
 
 // define sprite names (multiples of 8)
 #define S_G_MAN_RIGHT           0
@@ -252,40 +251,55 @@ struct RobotData
 struct RobotData robot[MAX_ROBOTS];
 
 // robot movement seed (as used in Acorn version)
-u32 robotMoveSeed = 'P' | ('A' << 8) | ('U' << 16) | ('L' << 24);
+#define ROBOT_MOVE_SEED ('P' | ('A' << 8) | ('U' << 16) | ('L' << 24))
+u32 robotMoveSeed = ROBOT_MOVE_SEED;
 // mystery token seed (as used in Acorn version)
-u32 mysteryTokenSeed = 'T' | ('C' << 8) | ('E' << 16) | ('L' << 24);
-
-bool autoPlantBombs;        // set to true if man automatically drops bombs (from having picked up a token)
-u16 autoPlantTimer;         // univeral time when man started auto dropping bombs
-
-bool halo;
-u16 haloTimer;
+#define MYSTERY_TOKEN_SEED ('T' | ('C' << 8) | ('E' << 16) | ('L' << 24))
+u32 mysteryTokenSeed = MYSTERY_TOKEN_SEED;
 
 int rubbleCount;            // amount of rubble in the level
 
 u16 universalTimer;
+volatile u16 frameDone;     // universalTimer once a frame's game logic has finished (for tools/linktest)
 u16 timeOfDeath;
 
 u8 area[AREA_X][AREA_Y];        // memory of what tiles are drawn where on board
 u8 bombVal[AREA_X][AREA_Y];     // counters for each tiles bomb value so can increment more often than animation frame suggests
+u8 bombOwner[AREA_X][AREA_Y];   // which player dropped the bomb on each tile
 
-s16 manX;
-s16 manY;
+struct Player
+{
+    s16 x;                  // position on board in pixels
+    s16 y;
+    s16 directionX;         // direction moving in while between tiles
+    s16 directionY;
+    u16 sprite;             // sprite for direction facing, using the green man's sprite numbers
+    u16 frame;              // animation frame, walking or dying
+    u16 colour;             // offset from the green man's sprites to this player's
+    u8 oamMan;              // OAM positions of the man and his halo
+    u8 oamHalo;
+    u8 maxBombsAllowed;
+    u8 bombsCurrentlyDropped;
+    u8 lifeStatus;
+    u8 flameLength;
+    bool halo;
+    u16 haloTimer;
+    bool autoPlantBombs;    // set to true if man automatically drops bombs (from having picked up a token)
+    u16 autoPlantTimer;     // univeral time when man started auto dropping bombs
+    int lives;
+    u8 input;               // controller input this frame, IN_ bits from link.h
+};
+
+#define MAX_PLAYERS 2
+struct Player player[MAX_PLAYERS];
+int numPlayers = 1;         // 2 in a linked game
+int localPlayer;            // which player this Gameboy controls, the screen follows him
+
 u16 xOffset;    // screen offsets to be fed to hardware regs
 u16 yOffset;
-u16 manDirectionX;
-u16 manDirectionY;
-u16 manSprite;
-u16 manFrame;
-u8 manMaxBombsAllowed;
-u8 bombsCurrentlyDropped;
-u8 lifeStatus;
-u8 flameLength;
 bool nuked;
 int level;          // game level
 int startLevel;     // which level game started on (in case different)
-int lives;
 int score;
 bool playerHasContinued;
 
@@ -321,7 +335,18 @@ mm_sound_effect arg = {
     255,	// panning
 };
 
-LinkConnection conn;
+bool linkLost;      // set when the other Gameboy stops answering in a linked game
+bool matchOver;     // set when a linked game has been won
+
+// random numbers for the game itself, kept apart from rand() so that two linked Gameboys
+// can be given the same seed and make the same random choices
+u32 gameRandSeed;
+
+int gameRand(void)
+{
+    gameRandSeed = gameRandSeed * 1103515245 + 12345;
+    return (gameRandSeed >> 16) & 0x7FFF;
+}
 
 int inDevelopment = 0; // remove title screens to get to action faster for code-test cycle
 
@@ -332,7 +357,6 @@ int vblankTest = 0;
 
 // prototype the various ANSI functions to prevent implicit declaration warnings later
 //int rand(void);
-int strlen(const char*);
 //void srand(int);
 
 
@@ -1010,12 +1034,12 @@ void displayTiledBitmap(const unsigned char* bitmap, const unsigned short* palet
 // validate whether the player can enter a particular tile
 bool isTileEnterable(s8 x, s8 y)
 {
-    // check tile isn't a blockage
-    if(area[x][y] <= T_RUBBLE_EXPLO_END)
-        return FALSE;
-        
     // range check to ensure don't try and walk off the board
     if(x < 0 || y < 0 || x >= AREA_X || y >= AREA_Y)
+        return FALSE;
+        
+    // check tile isn't a blockage
+    if(area[x][y] <= T_RUBBLE_EXPLO_END)
         return FALSE;
         
     // got to here to tile must be ok to enter
@@ -1023,13 +1047,14 @@ bool isTileEnterable(s8 x, s8 y)
 }
 
 // drop a bomb
-void plantBomb(s8 x, s8 y)
+void plantBomb(int playerNum, s8 x, s8 y)
 {
     // put a bomb in area
     area[x][y] = T_BOMB_SMALL;
     
     // adjust count of number of bombs player is allowed to drop
-    bombsCurrentlyDropped++;
+    player[playerNum].bombsCurrentlyDropped++;
+    bombOwner[x][y] = playerNum;
     
     // plant a bomb at the specified tile number on display
     drawObject(x, y, T_BOMB_SMALL);
@@ -1038,6 +1063,47 @@ void plantBomb(s8 x, s8 y)
     bombVal[x][y] = 32;
 }
 
+// read this Gameboy's controller
+u8 readLocalInput(void)
+{
+    u8 input = 0;
+    
+    if( KEY_DOWN( KEYA ) || KEY_DOWN( KEYB ) )
+        input |= IN_BOMB;
+    if( KEY_DOWN( KEYUP ) )
+        input |= IN_UP;
+    if( KEY_DOWN( KEYDOWN ) )
+        input |= IN_DOWN;
+    if( KEY_DOWN( KEYLEFT ) )
+        input |= IN_LEFT;
+    if( KEY_DOWN( KEYRIGHT ) )
+        input |= IN_RIGHT;
+    if( KEY_DOWN( KEYSTART ) )
+        input |= IN_START;
+    
+    return input;
+}
+
+// get every player's input for this frame, in a linked game this waits for the other Gameboy
+// returns FALSE if the link has been lost
+bool readInputs(void)
+{
+    u8 input = readLocalInput();
+    player[localPlayer].input = input;
+    
+    if( numPlayers > 1 )
+    {
+        int otherInput = linkExchange(input);
+        if( LINK_LOST == otherInput )
+        {
+            linkLost = TRUE;
+            return FALSE;
+        }
+        player[1 - localPlayer].input = otherInput;
+    }
+    
+    return TRUE;
+}
 
 // handle when player has pressed pause button
 void pauseActivated()
@@ -1103,12 +1169,33 @@ void pauseActivated()
     
     copyAllOAM();
     
-    // wait for player to release the start button that they pressed to trigger the pause
-    for( ; KEY_DOWN( KEYSTART) ; ) { mmFrame(); VBlankIntrWait(); }
-    
-    // wait for player to press (and release) the start button again to unpause
-    for( ; !KEY_DOWN( KEYSTART ) ; ) { mmFrame(); VBlankIntrWait(); }
-    for( ; KEY_DOWN( KEYSTART ) ; ) { mmFrame(); VBlankIntrWait(); }
+    // wait for start to be released, pressed and released again, by either player in a linked
+    // game (both Gameboys see the same presses so they unpause together)
+    int stage = 0;
+    while( stage < 3 )
+    {
+        bool startHeld;
+        
+        if( numPlayers > 1 )
+        {
+            if( !readInputs() )
+                break;
+            startHeld = ( (player[0].input | player[1].input) & IN_START ) != 0;
+        }
+        else
+        {
+            startHeld = KEY_DOWN( KEYSTART );
+        }
+        
+        // stage 1 waits for a press, stages 0 and 2 for a release
+        if( startHeld == (1 == stage) )
+            stage++;
+        else
+        {
+            mmFrame();
+            VBlankIntrWait();
+        }
+    }
     
     // remove the pause banner
     int letCount;
@@ -1133,79 +1220,76 @@ void pauseActivated()
     // return to main game loop
 }
 
-// check for keypresses that affect gameplay
-void checkInGameKeyPresses()
+// act on a player's input for movement and dropping bombs
+void checkInGameKeyPresses(int playerNum)
 {
-    // assuming man is still alive
+    struct Player* p = &player[playerNum];
+    
+    // dead men don't move
+    if(p->lifeStatus != ALIVE)
+        return;
         
     // if not currently moving
-    if(!manDirectionX && !manDirectionY)
+    if(!p->directionX && !p->directionY)
     {
         // convert pixels of man position to current tile number
-        s8 manTileX = manX / 16;
-        s8 manTileY = manY / 16;
+        s8 manTileX = p->x / 16;
+        s8 manTileY = p->y / 16;
     
     	// if player wants to drop a bomb or they automatically drop a bomb at the moment
-        if( KEY_DOWN( KEYA ) || KEY_DOWN( KEYB ) || autoPlantBombs)
+        if( (p->input & IN_BOMB) || p->autoPlantBombs)
         {
         	// if the user can drop bombs on this tile then
             if( area[manTileX][manTileY] == T_SPACE)
             {
             	// drop bomb if we can
-                if(bombsCurrentlyDropped < manMaxBombsAllowed)
-                    plantBomb(manTileX, manTileY);
+                if(p->bombsCurrentlyDropped < p->maxBombsAllowed)
+                    plantBomb(playerNum, manTileX, manTileY);
             }
         }
     
     	// check for player pressing certain directions
     	
-        if( KEY_DOWN( KEYUP ) )
+        if( p->input & IN_UP )
         {
             if(isTileEnterable(manTileX, manTileY - 1) )
             {
-                manDirectionY = -1;
-                manSprite = S_G_MAN_UP;
+                p->directionY = -1;
+                p->sprite = S_G_MAN_UP;
                 return;
             }
         }
               
-        if( KEY_DOWN( KEYDOWN ) )
+        if( p->input & IN_DOWN )
         {
             if(isTileEnterable(manTileX, manTileY + 1) )
             {
-                manDirectionY = 1;
-                manSprite = S_G_MAN_DOWN;
+                p->directionY = 1;
+                p->sprite = S_G_MAN_DOWN;
                 return;
             }
         }
             
-        if( KEY_DOWN( KEYLEFT ) )
+        if( p->input & IN_LEFT )
         {
             if(isTileEnterable(manTileX - 1, manTileY) )
             {
-                manDirectionX = -1;
-                manSprite = S_G_MAN_LEFT;
+                p->directionX = -1;
+                p->sprite = S_G_MAN_LEFT;
                 return;
             }
         }
         
-        if( KEY_DOWN( KEYRIGHT ) )
+        if( p->input & IN_RIGHT )
         {
             if(isTileEnterable(manTileX + 1, manTileY) )
             {
-                manDirectionX = 1;
-                manSprite = S_G_MAN_RIGHT;
+                p->directionX = 1;
+                p->sprite = S_G_MAN_RIGHT;
                 return;
             }
         }
     }
-    
-    if( KEY_DOWN( KEYSTART ) )
-    {
-        // stays in this function until unpaused
-        pauseActivated();
-    }
-
 }
 
 // nuclear reactor explosion
@@ -1250,6 +1334,9 @@ void nuke()
 // previously had this function set to inline but seemed to break linker in debug build so removed
 void updateBackgroundOffset(void)
 {
+    s16 manX = player[localPlayer].x;
+    s16 manY = player[localPlayer].y;
+    
     // scroll background in X
     if(manX >= 7 * 16)
     {   
@@ -1269,70 +1356,93 @@ void updateBackgroundOffset(void)
         yOffset = 0;
 }
 
-// draw the man sprite at the current position
-void drawManSprite()
+// set up a sprite at a position on the game board, allowing for the screen scroll
+void drawBoardSprite(u16 spriteNumber, u16 charNumber, s16 x, s16 y)
 {
-    updateBackgroundOffset();
-    
-    drawSprite(OAM_GMAN, manSprite + (manFrame * 8), manX - xOffset, manY - yOffset);
-    // draw halo if there is one
-    if(halo)
-        drawSprite(OAM_GHALO, S_HALO, manX - xOffset, manY - yOffset);
+    // positions off the left or top of the display wrap round in sprite coordinates
+    drawSprite(spriteNumber, charNumber, (x - xOffset) & 511, (y - yOffset) & 255);
 }
 
-void moveMan()
+// draw the men (and halos) at their current positions
+void drawPlayers(void)
+{
+    int i;
+    for(i=0; i<numPlayers; i++)
+    {
+        struct Player* p = &player[i];
+        
+        switch(p->lifeStatus)
+        {
+            case ALIVE :
+                drawBoardSprite(p->oamMan, p->sprite + p->colour + (p->frame * 8), p->x, p->y);
+                if(p->halo)
+                    drawBoardSprite(p->oamHalo, S_HALO, p->x, p->y);
+                else
+                    turnOffSprite(p->oamHalo);
+                break;
+                
+            case DYING :
+                drawBoardSprite(p->oamMan, S_MAN_EXPLO_START + (p->frame * 8), p->x, p->y);
+                turnOffSprite(p->oamHalo);
+                break;
+                
+            default :
+                turnOffSprite(p->oamMan);
+                turnOffSprite(p->oamHalo);
+                break;
+        }
+    }
+}
+
+// start a man dying
+void killMan(struct Player* p)
+{
+    //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
+    mmEffectEx(&arg);
+    
+    p->lifeStatus = DYING;
+    p->frame = 0;           // set to first frame of dying animation
+}
+
+void moveMan(struct Player* p)
 {
     // ??? should probably extract collision detection do a different function and then only call moveMan if alive
     // so can check collisions less frequently than every frame if necessary
     
-    if(lifeStatus == DYING)
+    if(p->lifeStatus == DYING)
     {
         // slow down death of man and robots if nuke has just occurred
         if( !(universalTimer % 6) )
         {
             // next frame of dying animation
-            manFrame++;
+            p->frame++;
             // if have exceeded dying animation then dead
-            if(manFrame > 5 )
+            if(p->frame > 5 )
             {
             	// player now dead
-                lifeStatus = DEAD;
-                turnOffSprite(OAM_GMAN);
+                p->lifeStatus = DEAD;
                 timeOfDeath = universalTimer + 1000; // add 1000 for when the screen should blank out
-            }
-            else
-            {
-                // plot next frame of dying animation
-                drawSprite(OAM_GMAN, S_MAN_EXPLO_START + (manFrame * 8), manX - xOffset, manY - yOffset);
             }
         }
         return;
     }
     
     // dead men don't move
-    if(lifeStatus == DEAD)
+    if(p->lifeStatus == DEAD)
         return;
     // else alive
         
     // check for collision with explosion
     
-    u8 tile1 = area[manX / 16][manY / 16];
-    u8 tile2 = area[(manX / 16) + (manX % 16 ? 1 : 0)][(manY / 16) + (manY % 16 ? 1 : 0)];
+    u8 tile1 = area[p->x / 16][p->y / 16];
+    u8 tile2 = area[(p->x / 16) + (p->x % 16 ? 1 : 0)][(p->y / 16) + (p->y % 16 ? 1 : 0)];
     if( (tile1 >= T_SPACE_EXPLO_CENTRE_START && tile1 <= T_SPACE_EXPLO_DOWN_END)
      || (tile2 >= T_SPACE_EXPLO_CENTRE_START && tile2 <= T_SPACE_EXPLO_DOWN_END) )
     {
         // if we've not got a halo or if we've just blown up a reactor
-        if(!halo || nuked)
+        if(!p->halo || nuked)
         {
-            // start dying
-            
-            //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
-            mmEffectEx(&arg);
-
-            lifeStatus = DYING;
-            manFrame = 0;           // set to first frame of dying animation
-            drawSprite(OAM_GMAN, S_MAN_EXPLO_START, manX - xOffset, manY - yOffset);
-            turnOffSprite(OAM_GHALO);
+            killMan(p);
             return;
         }
     }
@@ -1352,69 +1462,59 @@ void moveMan()
             // ??? very simple collision algorithm so may want to look at better methods
             
             // if robot to the left of man by a whole tile
-            if(robot[i].x <= manX - 16)
+            if(robot[i].x <= p->x - 16)
                 continue;
             // if robot to the right of man by a whole tile
-            if(robot[i].x >= manX + 16)
+            if(robot[i].x >= p->x + 16)
                 continue;
             // if robot above man by a whole tile
-            if(robot[i].y <= manY - 16)
+            if(robot[i].y <= p->y - 16)
                 continue;
             // if robot below man by a whole tile
-            if(robot[i].y >= manY + 16)
+            if(robot[i].y >= p->y + 16)
                 continue;
             
             // robot is in same area as man so start dying
-            if(!halo)
+            if(!p->halo)
             {      
-                lifeStatus = DYING;
-                //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
-                mmEffectEx(&arg);
-                manFrame = 0;           // set to first frame of dying animation
-                drawSprite(OAM_GMAN, S_MAN_EXPLO_START, manX - xOffset, manY - yOffset);
+                killMan(p);
                 return;
             }
         }
     }
     
     // if player moving (i.e. inbetween squares)
-    if( manDirectionX || manDirectionY)
+    if( p->directionX || p->directionY)
     { 
-    	//q if( !(universalTimer % 2) )
-    	{
-    		
-	        // if moving horizontally 
-	        if(manDirectionX)
-	        {
-	            // adjust position 2 pixel
-	            manX += manDirectionX*2;
-	            
-	            // if have reached the boundary of a tile then stop moving
-	            if( !(manX % 16) )
-	            {
-	                manDirectionX = 0;
-	                manFrame = 0;       // set sprite back to standing still
-	            }
-	            else
-	                manFrame = (manFrame + 1) % 5; // next animation frame
-	        }
-	        else
-	        {
-	            // adjust position 2 pixel
-	            manY += manDirectionY*2;
-	            
-	            // if have reached the boundary of a tile then stop moving
-	            if( !(manY % 16) )
-	            {
-	                manDirectionY = 0;
-	                manFrame = 0;       // set sprite back to standing still
-	            }
-	            else
-	                manFrame = (manFrame + 1) % 5; // adjust animation frame
-	        }
-	        
-	        drawManSprite();
-    	}
+        // if moving horizontally 
+        if(p->directionX)
+        {
+            // adjust position 2 pixel
+            p->x += p->directionX*2;
+            
+            // if have reached the boundary of a tile then stop moving
+            if( !(p->x % 16) )
+            {
+                p->directionX = 0;
+                p->frame = 0;       // set sprite back to standing still
+            }
+            else
+                p->frame = (p->frame + 1) % 5; // next animation frame
+        }
+        else
+        {
+            // adjust position 2 pixel
+            p->y += p->directionY*2;
+            
+            // if have reached the boundary of a tile then stop moving
+            if( !(p->y % 16) )
+            {
+                p->directionY = 0;
+                p->frame = 0;       // set sprite back to standing still
+            }
+            else
+                p->frame = (p->frame + 1) % 5; // adjust animation frame
+        }
     }
 }
 
@@ -1428,7 +1528,9 @@ void detonateBomb(u8 x, u8 y)
     //SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
     mmEffectEx(&explo);
     
-    bombsCurrentlyDropped--;
+    struct Player* owner = &player[ bombOwner[x][y] ];
+    owner->bombsCurrentlyDropped--;
+    u8 flameLength = owner->flameLength;
     
     // centre piece
     area[x][y] = T_SPACE_EXPLO_CENTRE_START;
@@ -1589,10 +1691,10 @@ void checkExplodingRubble(u8 x, u8 y)
             rubbleCount--;
             
             // randomly decide whether to drop a gift or not
-            if( (rand() % 10) >= 8 )
+            if( (gameRand() % 10) >= 8 )
             {
                 // randomly choose gift
-                switch(rand() % 3)
+                switch(gameRand() % 3)
                 {
                     case 0 : area[x][y] = T_GIFTBOMB; break;
                     case 1 : area[x][y] = T_GIFTFLAME; break;
@@ -1857,7 +1959,7 @@ void generateLevel(void)
             
             if( (x+y) > 1 &&
                 (x+y) < ((AREA_X + AREA_Y) - 3) &&
-                (rand() % 16) < 10 )
+                (gameRand() % 16) < 10 )
             {
                 drawObject(x,y,T_RUBBLE);
                 rubbleCount++;
@@ -1943,8 +2045,8 @@ void generateLevel(void)
     int robotsPlaced = 0;
     do
     {
-        x = rand() % AREA_X;
-        y = rand() % AREA_Y;
+        x = gameRand() % AREA_X;
+        y = gameRand() % AREA_Y;
         
         // ??? work out what's happening with this AREA_X+AREA_Y - 9 to get 23 with diff size play areas
         
@@ -1982,28 +2084,36 @@ void generateLevel(void)
     numRobots = totalRobots;
 }
 
+// put a player at the start of a level
+void initialisePlayer(struct Player* p, s16 tileX, s16 tileY, u16 sprite)
+{
+    p->halo = TRUE;
+    p->haloTimer = universalTimer;
+    p->flameLength = 2;
+    p->bombsCurrentlyDropped = 0;
+    p->maxBombsAllowed = 1;
+    p->autoPlantBombs = FALSE;
+    p->autoPlantTimer = 0;
+    
+    p->x = tileX * 16;
+    p->y = tileY * 16;
+    p->directionX = 0;
+    p->directionY = 0;
+    p->sprite = sprite;
+    p->frame = 0;
+}
+
 // called at start of new level to generate level etc
 void initialiseLevel(void)
 {
     
-    halo = TRUE;
-    haloTimer = universalTimer;
-    flameLength = 2;
-    bombsCurrentlyDropped = 0;
-    manMaxBombsAllowed = 1;
     robotsHalt = FALSE;
     robotsHaltCount = 0;
-    autoPlantBombs = FALSE;
-    autoPlantTimer = 0;
-        
-    // place man in bottom right
     
-    manX = (AREA_X-1) * 16;
-    manY = (AREA_Y-1) * 16;
-    manDirectionX = 0;
-    manDirectionY = 0;
-    manSprite = S_G_MAN_LEFT;
-    manFrame = 0;
+    // place man in bottom right, and the second player top left
+    initialisePlayer(&player[0], AREA_X-1, AREA_Y-1, S_G_MAN_LEFT);
+    if( numPlayers > 1 )
+        initialisePlayer(&player[1], 0, 0, S_G_MAN_RIGHT);
     
     updateBackgroundOffset();
     
@@ -2036,14 +2146,12 @@ void initialiseLevel(void)
         for(y=0; y<AREA_Y; y++)
         {
             bombVal[x][y] = 0;
+            bombOwner[x][y] = 0;
         }
     }
     
-    // draw man
-    drawSprite(OAM_GMAN, manSprite + (manFrame * 8), manX - xOffset, manY - yOffset);
-    // should always be a halo anyway at start of level
-    if(halo)
-        drawSprite(OAM_GHALO, S_HALO, manX - xOffset, manY - yOffset);
+    // draw men
+    drawPlayers();
         
     // draw robot sprites
     for(i=0; i<totalRobots; i++)
@@ -2175,16 +2283,27 @@ void initialiseGame(void)
     universalTimer = 0;
     timeOfDeath = 0;
     nuked = FALSE;
-    lifeStatus = ALIVE;
-    lives = 2;
     playerHasContinued = FALSE;
+    
+    int i;
+    for(i=0; i<MAX_PLAYERS; i++)
+    {
+        player[i].lifeStatus = ALIVE;
+        player[i].lives = 2;
+    }
+    
+    player[0].colour = 0;
+    player[0].oamMan = OAM_GMAN;
+    player[0].oamHalo = OAM_GHALO;
+    player[1].colour = S_R_MAN_RIGHT - S_G_MAN_RIGHT;
+    player[1].oamMan = OAM_RMAN;
+    player[1].oamHalo = OAM_RHALO;
     
     // level dependent
     // startlevel determined when selecting from main menu
     level = startLevel-1;
 
 }
-
 
 // display instructions when player requests them
 void displayStory()
@@ -2342,14 +2461,15 @@ void displayStory()
         &newLine,
         "PRESS START TO PAUSE.",
         
-        //&waitKeypress, &cls,
-        //"2 PLAYER GAME :",
-        //&newLine,
-        //"BLOW THE ER, LIVING",
-        //"DAYLIGHTS OUT OF THE",
-        //"OTHER PLAYER.",
-        //&newLine,
-        //"SIMPLE, INNIT?",
+        &waitKeypress, &cls,
+        "2 PLAYER GAME :",
+        &newLine,
+        "LINK UP TWO GAMEBOYS",
+        "AND BLOW THE ER, LIVING",
+        "DAYLIGHTS OUT OF THE",
+        "OTHER PLAYER.",
+        &newLine,
+        "SIMPLE, INNIT?",
         
         &waitKeypress, &cls,
         "DATA RETRIEVAL",
@@ -2429,9 +2549,10 @@ void displayStory()
 // returns TRUE if game should leave the gameloop() function (i.e. properly dead not just lost life)
 int handleDeath(void)
 {
-	lives--;
+    struct Player* p = &player[0];
+	p->lives--;
             
-    if( lives >= 0 && !nuked)
+    if( p->lives >= 0 && !nuked)
     {
         // on arc version the game freezes up once death sequence over and the number of lives remaining
         // is shown on screen then after X seconds the text vanishes and the game continues exactly as before
@@ -2443,7 +2564,7 @@ int handleDeath(void)
         // compose number of lives string
         char livesMessage[] = "LIFE X";
         // says life 2, then life 3, then you're dead
-        livesMessage[5] = '0' + (3 - lives);
+        livesMessage[5] = '0' + (3 - p->lives);
         u32 spriteNum = OAM_LETTERS;
         writeText(-1, 60, livesMessage, &spriteNum);
         writeText(-1, 80, "GET READY", &spriteNum);
@@ -2459,19 +2580,17 @@ int handleDeath(void)
         // disable any special features
         robotsHalt = FALSE;
         robotsHaltCount = 0;
-        autoPlantBombs = FALSE;
-        autoPlantTimer = 0;
+        p->autoPlantBombs = FALSE;
+        p->autoPlantTimer = 0;
 
-        lifeStatus = ALIVE;
+        p->lifeStatus = ALIVE;
 
-        halo = TRUE;
-        haloTimer = universalTimer;
-        manFrame = 0;
+        p->halo = TRUE;
+        p->haloTimer = universalTimer;
+        p->frame = 0;
         
         // draw man
-        drawSprite(OAM_GMAN, manSprite + (manFrame * 8), manX - xOffset, manY - yOffset);
-        if(halo)
-            drawSprite(OAM_GHALO, S_HALO, manX - xOffset, manY - yOffset);    
+        drawPlayers();
         
     }
     else
@@ -2483,7 +2602,7 @@ int handleDeath(void)
             writeText(-1, 60, "REACTOR EXPLOSION", &spriteNum);
             writeText(-1, 80, "MISSION ABORTED", &spriteNum);
             
-            lives = -1;
+            p->lives = -1;
         }
         else
         {
@@ -2530,8 +2649,8 @@ int handleDeath(void)
         	
         	// re-initialise some values to continue play
         	nuked = FALSE;
-		    lifeStatus = ALIVE;
-		    lives = 2;
+		    p->lifeStatus = ALIVE;
+		    p->lives = 2;
     	}
     	else
     	{
@@ -2543,28 +2662,264 @@ int handleDeath(void)
     return FALSE;
 }
 
+// TRUE if any player is in the given life status
+bool anyPlayer(u8 lifeStatus)
+{
+    int i;
+    for(i=0; i<numPlayers; i++)
+        if(player[i].lifeStatus == lifeStatus)
+            return TRUE;
+    return FALSE;
+}
+
+const char* const playerName[MAX_PLAYERS] = { "GREEN", "RED" };
+
+// show a banner of up to two lines over the game, wait a bit then remove it
+void showGameBanner(const char* line1, const char* line2)
+{
+    u32 spriteNum = OAM_LETTERS;
+    writeText(-1, 60, line1, &spriteNum);
+    if(line2)
+        writeText(-1, 80, line2, &spriteNum);
+    
+    delayOrKeypress(120);
+    
+    turnOffSprites(OAM_LETTERS, spriteNum);
+    copyAllOAM();
+}
+
+// handles players dying in a linked game (called once no one is still in the middle of dying,
+// so players dying together are dealt with together)
+// returns TRUE if the game's over
+int handleTwoPlayerDeaths(void)
+{
+    int i;
+    int numDead = 0;
+    int lastDead = 0;
+    for(i=0; i<numPlayers; i++)
+    {
+        if(player[i].lifeStatus == DEAD)
+        {
+            player[i].lives--;
+            numDead++;
+            lastDead = i;
+        }
+    }
+    
+    // game over once someone's run out of lives
+    int numOut = 0;
+    int winner = -1;
+    for(i=0; i<numPlayers; i++)
+    {
+        if(player[i].lives < 0)
+            numOut++;
+        else
+            winner = i;
+    }
+    
+    if(numOut)
+    {
+        // both Gameboys reach here on the same frame, finish with the link now so neither is
+        // left waiting for the other while the result's displayed
+        linkEndGame();
+        matchOver = TRUE;
+        
+        u32 spriteNum = OAM_LETTERS;
+        if(numOut > 1)
+        {
+            writeText(-1, 60, "IT'S A DRAW!", &spriteNum);
+        }
+        else
+        {
+            char winMessage[20];
+            strcpy(winMessage, playerName[winner]);
+            strcat(winMessage, " WINS!");
+            writeText(-1, 60, winMessage, &spriteNum);
+            writeText(-1, 80, winner == localPlayer ? "WELL DONE" : "UNLUCKY", &spriteNum);
+        }
+        copyAllOAM();
+        
+        // make sure a button held down during play doesn't skip the result
+        delay(60);
+        for( ; (~KEYS) & 0x3FF ; ) { mmFrame(); VBlankIntrWait(); }
+        waitForKeyPress();
+        
+        fadeToBlack();
+        turnOffAllSprites();
+        copyAllOAM();
+        return TRUE;
+    }
+    
+    // say who died and how many lives are left
+    char line1[24];
+    if(nuked)
+        strcpy(line1, "REACTOR EXPLOSION");
+    else if(numDead > 1)
+        strcpy(line1, "BOTH DIED");
+    else
+    {
+        strcpy(line1, playerName[lastDead]);
+        strcat(line1, " DIED");
+    }
+    char line2[] = "LIVES: GREEN X  RED X";
+    line2[13] = '0' + player[0].lives + 1;
+    line2[20] = '0' + player[1].lives + 1;
+    showGameBanner(line1, line2);
+    
+    if(nuked)
+    {
+        // the blast has cleared the level so go on to the next
+        rubbleCount = 0;
+        for(i=0; i<numPlayers; i++)
+            player[i].lifeStatus = ALIVE;
+        return FALSE;
+    }
+    
+    // as in a single player game, the dead come back to life where they died with a halo
+    robotsHalt = FALSE;
+    robotsHaltCount = 0;
+    for(i=0; i<numPlayers; i++)
+    {
+        struct Player* p = &player[i];
+        if(p->lifeStatus == DEAD)
+        {
+            p->autoPlantBombs = FALSE;
+            p->autoPlantTimer = 0;
+            p->lifeStatus = ALIVE;
+            p->halo = TRUE;
+            p->haloTimer = universalTimer;
+            p->frame = 0;
+        }
+    }
+    drawPlayers();
+    
+    return FALSE;
+}
+
+// check for a player picking up a gift
+void collectGift(struct Player* p)
+{
+    int x,y;
+    
+    if(p->lifeStatus != ALIVE)
+        return;
+    
+    // ??? this is probably being checked too often, should we do it with other collision checks?
+    // (note need only check whether man is standing completely on tile not half on it,
+    // as is done with explosion collisions)
+    if(area[p->x / 16][p->y / 16] >= T_GIFTBOMB)
+    {
+        // check man is exactly on tile before triggering gift (otherwise gift appears to disappear before man on square completely)
+        // ??? this may be too precise, could disregard the bottom two bits? to give +/- 3 pixels
+        if( !(p->x & 15) && !(p->y & 15) )
+        {
+            u8 giftType = area[p->x / 16][p->y / 16];
+            // blank tile now we've got the gift
+            drawObject(p->x / 16, p->y / 16, T_SPACE);
+            
+            //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
+            mmEffectEx(&token);
+            
+            switch( giftType )
+            {
+                case T_GIFTBOMB     : p->maxBombsAllowed++; break;
+                
+                case T_GIFTFLAME    : p->flameLength++; break;
+                
+                case T_GIFTSURPRISE :
+                    // choose surprise gift (in same way Acorn version did)
+                    mysteryTokenSeed += (mysteryTokenSeed >> 1);
+                    // decode chosen surprise gift
+                    if( (mysteryTokenSeed & 255) < 73 )
+                    {
+                        // explode all bombs
+                        
+                        for(y = 0; y < AREA_Y; y++)
+                           {
+                            for(x = 0; x < AREA_X; x++)
+                            {
+                                if(area[x][y] >= T_BOMB_LARGE && area[x][y] <= T_BOMB_SMALL)
+                                {
+                                    bombVal[x][y] = 0; // reset bomb countdown timer to detonate
+                                    detonateBomb(x,y);
+                                }
+                            }
+                        }
+                    }
+                    else if( (mysteryTokenSeed & 255) < 146 )
+                    {
+                        // robot halt
+                        robotsHalt = TRUE;
+                        robotsHaltCount = universalTimer;
+                    }
+                    else if( (mysteryTokenSeed & 255) < 182 )
+                    {
+                        // auto drop bombs
+                        p->autoPlantBombs = TRUE;
+                        p->autoPlantTimer = universalTimer;
+                    }
+                    else
+                    {
+                        // aura (halo)
+                        p->halo = TRUE;
+                        p->haloTimer = universalTimer;
+                    }
+                    break; // end gift-type switch
+            }
+        }            
+    }
+}
+
 // main game loop
+// In a linked game both Gameboys run this in step, everything that happens in the game must
+// depend only on the players' inputs (exchanged each frame) and gameRand(), never on anything
+// local to one Gameboy, or the two games will drift apart.
 void gameLoop(void)
 {
+    int i;
     
     // infinite loop
     for( ; ; )
     {
 
-        // check for all rubble gone
-        if( rubbleCount <= 0 )
+        if(numPlayers == 1)
         {
-            // level completed
-            fadeToBlack();
-            turnOffAllSprites();
-            return;
+            // check for all rubble gone
+            if( rubbleCount <= 0 )
+            {
+                // level completed
+                fadeToBlack();
+                turnOffAllSprites();
+                return;
+            }
+            
+            // if dead then leave game loop (if user doesn't continue)
+            if(player[0].lifeStatus == DEAD)
+            {
+                if( handleDeath() )
+                	return;   
+            }
         }
-        
-        // if dead then leave game loop (if user doesn't continue)
-        if(lifeStatus == DEAD)
+        else
         {
-            if( handleDeath() )
-            	return;   
+            // deal with deaths once no one's still dying, so that two players dying at
+            // about the same time is a draw rather than whoever finished dying first losing
+            if( !anyPlayer(DYING) )
+            {
+                if( anyPlayer(DEAD) )
+                {
+                    if( handleTwoPlayerDeaths() )
+                        return;
+                }
+                
+                if( rubbleCount <= 0 )
+                {
+                    // level completed
+                    fadeToBlack();
+                    turnOffAllSprites();
+                    return;
+                }
+            }
         }
         
         // increment universal timer variable used to synchronise various game functions
@@ -2612,23 +2967,24 @@ void gameLoop(void)
             }
             
             // check gift time outs i.e. have they finished yet
+            // (differences taken as u16 so they still work when universalTimer wraps round)
             if(robotsHalt)
             {
-                if(universalTimer - robotsHaltCount > 2000 )
+                if( (u16)(universalTimer - robotsHaltCount) > 2000 )
                     robotsHalt = FALSE;
             }
             
-            if(autoPlantBombs)
-                if(universalTimer - autoPlantTimer > 2000 )
-                    autoPlantBombs = FALSE;
-            
-            if(halo)
+            for(i=0; i<numPlayers; i++)
             {
-                if(universalTimer - haloTimer > 700 )
-                {
-                    halo = FALSE;
-                    turnOffSprite(OAM_GHALO);
-                }
+                struct Player* p = &player[i];
+                
+                if(p->autoPlantBombs)
+                    if( (u16)(universalTimer - p->autoPlantTimer) > 2000 )
+                        p->autoPlantBombs = FALSE;
+                
+                if(p->halo)
+                    if( (u16)(universalTimer - p->haloTimer) > 700 )
+                        p->halo = FALSE;
             }
             
         }
@@ -2637,84 +2993,45 @@ void gameLoop(void)
         if(!robotsHalt)
             robotAI();
         
-        // check for keypresses
-        checkInGameKeyPresses();
+        // check for keypresses, from both Gameboys in a linked game
+        if( !readInputs() )
+            return;
         
-        // check for gifts colliding with man
-        // ??? this is probably being checked too often, should we do it with other collision checks?
-        // (note need only check whether man is standing completely on tile not half on it,
-        // as is done with explosion collisions)
-        if(area[manX / 16][manY / 16] >= T_GIFTBOMB)
+        bool pausePressed = FALSE;
+        for(i=0; i<numPlayers; i++)
         {
-            // check man is exactly on tile before triggering gift (otherwise gift appears to disappear before man on square completely)
-            // ??? this may be too precise, could disregard the bottom two bits? to give +/- 3 pixels
-            if( !(manX & 15) && !(manY & 15) )
-            {
-                u8 giftType = area[manX / 16][manY / 16];
-                // blank tile now we've got the gift
-                drawObject(manX / 16, manY / 16, T_SPACE);
-                
-                //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
-                mmEffectEx(&token);
-                
-                switch( giftType )
-                {
-                    case T_GIFTBOMB     : manMaxBombsAllowed++; break;
-                    
-                    case T_GIFTFLAME    : flameLength++; break;
-                    
-                    case T_GIFTSURPRISE :
-                        // choose surprise gift (in same way Acorn version did)
-                        mysteryTokenSeed += (mysteryTokenSeed >> 1);
-                        // decode chosen surprise gift
-                        if( (mysteryTokenSeed & 255) < 73 )
-                        {
-                            // explode all bombs
-                            
-                            for(y = 0; y < AREA_Y; y++)
-                               {
-                                for(x = 0; x < AREA_X; x++)
-                                {
-                                    if(area[x][y] >= T_BOMB_LARGE && area[x][y] <= T_BOMB_SMALL)
-                                    {
-                                        bombVal[x][y] = 0; // reset bomb countdown timer to detonate
-                                        detonateBomb(x,y);
-                                    }
-                                }
-                            }
-                        }
-                        else if( (mysteryTokenSeed & 255) < 146 )
-                        {
-                            // robot halt
-                            robotsHalt = TRUE;
-                            robotsHaltCount = universalTimer;
-                        }
-                        else if( (mysteryTokenSeed & 255) < 182 )
-                        {
-                            // auto drop bombs
-                            autoPlantBombs = TRUE;
-                            autoPlantTimer = universalTimer;
-                        }
-                        else
-                        {
-                            // aura (halo)
-                            halo = TRUE;
-                            haloTimer = universalTimer;
-                            drawSprite(OAM_GHALO, S_HALO, manX - xOffset, manY - yOffset);
-                        }
-                        break; // end gift-type switch
-                }
-            }            
+            checkInGameKeyPresses(i);
+            if(player[i].input & IN_START)
+                pausePressed = TRUE;
         }
         
+        if(pausePressed)
+        {
+            // stays in this function until unpaused
+            pauseActivated();
+            if(linkLost)
+                return;
+        }
+        
+        // check for gifts colliding with men
+        for(i=0; i<numPlayers; i++)
+            collectGift(&player[i]);
+        
         // increment man movement if any and increment animation frame (test for collision with robots)
-        moveMan();
+        for(i=0; i<numPlayers; i++)
+            moveMan(&player[i]);
+        
+        updateBackgroundOffset();
+        drawPlayers();
         
         // move robots after man so that offset vars have been updated
         moveRobots();
         
         // maxmod soundfx update
         mmFrame();
+
+        // tells tools/linktest the game state is complete for this frame
+        frameDone = universalTimer;
 
         // update display
         //wait();
@@ -2785,6 +3102,10 @@ void displayText()
 
 void startGameAndManageContinues()
 {
+    
+    numPlayers = 1;
+    localPlayer = 0;
+    gameRandSeed = rand();
     
     rubbleCount = 0;
     initialiseGame();
@@ -2896,7 +3217,7 @@ void startGameAndManageContinues()
         
         
     }
-    while( lives >= 0 );
+    while( player[0].lives >= 0 );
     
 }
 
@@ -2904,152 +3225,143 @@ void onVBlank() {
     //vblankTest++; // ??? i have tested and this is getting set
     mmVBlank(); // maxmod sound sample library update
 
-    // could get called before connected - is that ok?
-    lc_on_vblank(&conn);
+    linkOnVBlank();
 }
 
-
-/*
-int soundTest3() {
-    
-	irqInit();
-
-	// Maxmod requires the vblank interrupt to reset sound DMA.
-	// Link the VBlank interrupt to mmVBlank, and enable it. 
-	irqSet( IRQ_VBLANK, onVBlank );
-
-	irqEnable(IRQ_VBLANK);
-
-    	// initialise maxmod with soundbank and 8 channels
-    mmInitDefault( (mm_addr)soundbank_bin, 8 );
-
-	mm_sound_effect explo = {
-		{ SFX_EXPLO } ,			// id
-		(int)(1.0f * (1<<10)),	// rate
-		0,		// handle
-		255,	// volume
-		255,	// panning
-	};
-
-    mmEffectEx(&explo);
-
-    do {
-		
-		VBlankIntrWait();
-
-		mmFrame();
-	 	
-	} while( 1 );
-
-}
-*/
-
-void onSerial() {
-    lc_on_serial(&conn);
-}
-
-void onTimer() {
-    lc_on_timer(&conn);
-}
-
-void multiPlayer()
+// show the waiting screen until the other Gameboy's ready to play too
+// returns FALSE if the player gives up waiting
+bool waitForOtherPlayer(void)
 {
+    displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
+    
+    int i;
+    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+    
+    u32 spriteNum = OAM_LETTERS;
+    writeText(-1, 30, "2 PLAYER LINK", &spriteNum);
+    writeText(-1, 60, "WAITING FOR THE", &spriteNum);
+    writeText(-1, 80, "OTHER PLAYER...", &spriteNum);
+    writeText(-1, 120, "PRESS B TO CANCEL", &spriteNum);
+    
+    linkStart();
+    
+    bool ready;
+    for( ; ; )
+    {
+        mmFrame();
+        VBlankIntrWait();
+        
+        if( linkPeerState() != LINK_PEER_NONE )
+        {
+            ready = TRUE;
+            break;
+        }
+        if( KEY_DOWN( KEYB ) )
+        {
+            ready = FALSE;
+            break;
+        }
+    }
+    
+    fadeToBlack();
+    turnOffAllSprites();
+    copyAllOAM();
+    
+    if(!ready)
+        linkStop();
+    return ready;
+}
 
-	// (1) Create a LinkConnection instance
-	LinkConnectionSettings settings = {
-		.baud_rate = BAUD_RATE_1,
-		.timeout = 3,
-		.remote_timeout = 5,
-		.buffer_len = 30,
-		.interval = 50,
-		.send_timer_id = 3,
-	};
-
-	conn = lc_init(settings);
-
-	//irqInit(); already done
-
-	// Maxmod requires the vblank interrupt to reset sound DMA.
-	// Link the VBlank interrupt to mmVBlank, and enable it. 
-	//irqSet( IRQ_VBLANK, onVBlank ); already done
-	irqSet( IRQ_SERIAL, onSerial );
-	irqSet( IRQ_TIMER3, onTimer );
-
-	//irqEnable(IRQ_VBLANK); already done
-	irqEnable(IRQ_SERIAL);
-	irqEnable(IRQ_TIMER3);
-
-	// (3) Initialize the library
-	lc_activate(&conn);
-
-	u16 data[LINK_MAX_PLAYERS] = {};
-  	char str[128] = {'\0'};
-
-	consoleDemoInit();
-
-	// ansi escape sequence to clear screen and home cursor
-	// /x1b[line;columnH
-	iprintf("\x1b[2J");
-
-	// ansi escape sequence to set print co-ordinates
-	// /x1b[line;columnH
-	iprintf("\x1b[0;4Hmoonquake multiplayer");
-	iprintf("\x1b[3;0HHold A for ambulance sound");
-
-	do {
-
-		int keys_pressed, keys_released;
-		
-		VBlankIntrWait();
-		
-		mmFrame();
-	 
-		scanKeys();
-
-		keys_pressed = keysDown();
-		keys_released = keysUp();
-
-		// (4) Send/read messages
-		u16 keys = ~keys_pressed; //& KEY_ANY;
-		u16 message = keys + 1;
-		lc_send(&conn, message);
-
-		if (lc_is_connected(&conn)) {
-		  
-		  iprintf("\x1b[5;0HConnected");
-
-/*
-		  sprintf(str, "Players: %d\n", conn.state.player_count);
-		  tte_write(str);
-*/
-
-		  for (int id = 0; id < conn.state.player_count; id++) {
-		    
-		    while (lc_has_message(&conn, id)) {
-		      data[id] = lc_read_message(&conn, id) - 1;
-		    }
-		    
-		    sprintf(str, "\x1b[6;0HPlayers %d: %d     \n", id, data[id]); // overwriting player 0-2 data on screen so doesn't go cleanly
-		    iprintf(str);
-		    
-		  }
-		  
-		  sprintf(str, "\x1b[7;0HSent: %d    \nSelf pID: %d    \n", message, conn.state.current_player_id);
-		  iprintf(str);
-		  
-		}
-		else {
-			iprintf("\x1b[5;0HWaiting");
-		  //sprintf(str, "Waiting...\n");
-		  //tte_write("Waiting...");
-		}
-
-
-
-	} while( 1 );
-
-
-
+// play a game against another Gameboy over the link cable
+void twoPlayerGame(void)
+{
+    if( !waitForOtherPlayer() )
+        return;
+    
+    numPlayers = 2;
+    localPlayer = linkIsMaster() ? 0 : 1;
+    linkLost = FALSE;
+    matchOver = FALSE;
+    
+    linkBeginGame();
+    
+    // agree a random seed for the game, made up from both Gameboys' random numbers
+    u32 seed = 0;
+    int i;
+    for(i=0; i<5 && !linkLost; i++)
+    {
+        u8 mine = rand() & 63;
+        int other = linkExchange(mine);
+        if( LINK_LOST == other )
+            linkLost = TRUE;
+        else if( localPlayer == 0 )
+            seed = (seed << 12) | (mine << 6) | other;
+        else
+            seed = (seed << 12) | (other << 6) | mine;
+    }
+    
+    // everything else the game uses must start the same on both Gameboys
+    gameRandSeed = seed;
+    robotMoveSeed = ROBOT_MOVE_SEED;
+    mysteryTokenSeed = MYSTERY_TOKEN_SEED;
+    startLevel = 0;
+    initialiseGame();
+    level = 0;
+    
+    bool firstLevel = TRUE;
+    while( !linkLost )
+    {
+        for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+        
+        u32 spriteNum = OAM_LETTERS;
+        if(firstLevel)
+        {
+            writeText(-1, 40, 0 == localPlayer ? "YOU ARE GREEN" : "YOU ARE RED", &spriteNum);
+            writeText(-1, 70, "LAST ONE ALIVE WINS", &spriteNum);
+        }
+        else
+        {
+            writeText(-1, 40, "LEVEL COMPLETE", &spriteNum);
+        }
+        char levelMessage[] = "LEVEL X";
+        levelMessage[6] = '0' + level;
+        writeText(-1, 100, levelMessage, &spriteNum);
+        
+        delayOrKeypress(120);
+        
+        fadeToBlack();
+        turnOffSprites(OAM_LETTERS, spriteNum);
+        copyAllOAM();
+        
+        nuked = FALSE;
+        for(i=0; i<numPlayers; i++)
+            player[i].lifeStatus = ALIVE;
+        initialiseLevel();
+        firstLevel = FALSE;
+        
+        gameLoop();
+        
+        if(matchOver)
+            break;
+        
+        // level completed so on to the next, going round again after the last
+        level = (level + 1) % NUM_LEVELS;
+    }
+    
+    if(linkLost)
+    {
+        u32 spriteNum = OAM_LETTERS;
+        writeText(-1, 60, "LINK LOST", &spriteNum);
+        copyAllOAM();
+        delay(180);
+        fadeToBlack();
+        turnOffAllSprites();
+        copyAllOAM();
+    }
+    
+    linkStop();
+    numPlayers = 1;
+    localPlayer = 0;
 }
 
 int main(void)
@@ -3077,6 +3389,10 @@ int main(void)
 	irqSet( IRQ_VBLANK, onVBlank );
 
     irqEnable(IRQ_VBLANK);
+
+    // link cable interrupts, only enabled while playing a linked game
+    irqSet( IRQ_SERIAL, linkOnSerial );
+    irqSet( IRQ_TIMER3, linkOnTimer );
 
     // initialise maxmod with soundbank and 8 channels
     mmInitDefault( (mm_addr)soundbank_bin, 8 );
@@ -3152,7 +3468,7 @@ int main(void)
             u32 firstSpriteOfInstructions = spriteNum;
             writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
             u32 firstSpriteOfMultiplayer = spriteNum;
-            writeText(-1, 100, "MULTIPLAYER", &spriteNum);
+            writeText(-1, 100, "2 PLAYER LINK", &spriteNum);
             
             // cycle the brightness of selected letters
             // for brightness adjust the sprites appear to have to be in semi-transparent mode
@@ -3287,7 +3603,7 @@ int main(void)
             case 0: startLevel = 0; startGameAndManageContinues(); break;
             case 1: startLevel = 7; startGameAndManageContinues(); break;
             case 2: displayStory(); break;
-            case 3: multiPlayer(); break;
+            case 3: twoPlayerGame(); break;
         }
         
     }
