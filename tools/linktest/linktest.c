@@ -95,7 +95,7 @@ static int maxFrames = 20000;
 static uint32_t traceAddr[4], traceSize[4], traceLast[NUM_GBAS][4];
 static const char* traceName[4];
 static int numTraces;
-static const char* shotDir = ".";
+static const char* shotDir;
 static volatile int stop;
 
 static uint32_t symAddr(const char* name) {
@@ -224,6 +224,9 @@ static uint32_t hashRange(struct mCore* core, uint32_t addr, uint32_t size) {
 }
 
 static void writeBmp(struct Gba* g, int frame) {
+	if (!shotDir) {
+		return;
+	}
 	char path[512];
 	snprintf(path, sizeof(path), "%s/gba%d_%06d.bmp", shotDir, g->id, frame);
 	FILE* f = fopen(path, "wb");
