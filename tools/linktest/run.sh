@@ -4,7 +4,16 @@
 #   tools/linktest/run.sh [linktest options...]
 #
 # Needs libmgba built from source, MGBA (default ~/gba/mgba) with the static library in
-# $MGBA/build-lib. Extra options are passed to linktest, e.g. --seed 0:5 --shot 1:900
+# $MGBA/build-lib, e.g.
+#
+#   git clone --branch 0.10.2 https://github.com/mgba-emu/mgba.git ~/gba/mgba
+#   mkdir ~/gba/mgba/build-lib && cd ~/gba/mgba/build-lib
+#   cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_STATIC=ON -DBUILD_SHARED=OFF \
+#       -DBUILD_QT=OFF -DBUILD_SDL=OFF -DM_CORE_GB=OFF -DUSE_LUA=OFF -DENABLE_SCRIPTING=OFF
+#   make
+#
+# Extra options are passed to linktest, e.g. --seed 0:5 --shot 1:900 (see linktest.c).
+# EXTRA_SYMS="name ..." adds more game variables, e.g. for --trace.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 top=$(cd "$here/../.." && pwd)
@@ -22,7 +31,7 @@ fi
 # game state compared between the two Gameboys, plus the symbols linktest needs
 syms=""
 for name in universalTimer frameDone numPlayers matchOver area bombVal bombOwner player \
-        robot rubbleCount gameRandSeed robotMoveSeed mysteryTokenSeed robotsHalt nuked level; do
+        robot rubbleCount gameRandSeed robotMoveSeed mysteryTokenSeed robotsHalt nuked level $EXTRA_SYMS; do
     line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk -v n="$name" '$4 == n { print $1 ":" $2 }')
     [ -n "$line" ] || { echo "no symbol $name in $ELF" >&2; exit 2; }
     syms="$syms --sym $name=$line"

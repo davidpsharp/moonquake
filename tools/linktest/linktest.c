@@ -24,7 +24,7 @@
 #include <unistd.h>
 
 #define NUM_GBAS 2
-#define MAX_SYMS 16
+#define MAX_SYMS 32
 #define MAX_SCRIPT 64
 #define MAX_SHOTS 64
 
@@ -92,6 +92,9 @@ static struct Sym syms[MAX_SYMS];
 static int numSyms;
 static uint32_t symFrameDone, symTimer, symNumPlayers, symMatchOver;
 static int maxFrames = 20000;
+static uint32_t traceAddr[4], traceSize[4], traceLast[NUM_GBAS][4];
+static const char* traceName[4];
+static int numTraces;
 static const char* shotDir = ".";
 static volatile int stop;
 
@@ -200,7 +203,11 @@ static void lsUnload(struct mLockstep* l, int id) {
 static void quietLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args) {
 	(void) logger;
 	(void) category;
-	if (level & (mLOG_FATAL | mLOG_ERROR)) {
+	static int verbose = -1;
+	if (verbose < 0) {
+		verbose = getenv("LINKTEST_LOG") != NULL;
+	}
+	if (verbose || (level & (mLOG_FATAL | mLOG_ERROR))) {
 		vfprintf(stderr, format, args);
 		fputc('\n', stderr);
 	}
@@ -268,13 +275,21 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 	}
 
+	for (int i = 0; i < numTraces; ++i) {
+		uint32_t v = traceSize[i] == 1 ? core->busRead8(core, traceAddr[i]) : core->busRead16(core, traceAddr[i]);
+		if (v != traceLast[g->id][i] || frame == 0) {
+			printf("gba%d frame %d: %s = %x\n", g->id, frame, traceName[i], v);
+			traceLast[g->id][i] = v;
+		}
+	}
+
 	int inGame = (core->busRead8(core, symNumPlayers) == 2);
 	int timer = core->busRead16(core, symTimer);
 	int frameDone = core->busRead16(core, symFrameDone);
 	int matchOver = core->busRead8(core, symMatchOver);
 
 	// record the game state once per game frame, when that frame's logic is complete
-	if (inGame && !matchOver && frameDone == timer && timer != g->lastFrameDone) {
+	if (inGame && !matchOver && timer && frameDone == timer && timer != g->lastFrameDone) {
 		g->lastFrameDone = timer;
 		uint32_t* h = &g->hashes[timer * (numSyms + 1)];
 		uint32_t all = 0;
@@ -348,6 +363,7 @@ static void usage(void) {
 	        "  --seed GBA:N           seed for random play\n"
 	        "  --pause GBA:TIMER      press start at that game frame and again 2s later\n"
 	        "  --reset GBA:FRAME      reset a Gameboy, as if switched off mid-game\n"
+	        "  --trace SYM            print a (1 or 2 byte) symbol whenever it changes\n"
 	        "  --shot GBA:FRAME       save a screenshot\n"
 	        "  --shots DIR            where to save screenshots\n"
 	        "  --frames N             give up after N frames\n");
@@ -389,6 +405,9 @@ int main(int argc, char** argv) {
 		} else if (!strcmp(a, "--pause") && v && sscanf(v, "%d:%d", &n, &k) == 2) {
 			gba[n].pauseAt = k;
 			++i;
+		} else if (!strcmp(a, "--trace") && v && numTraces < 4) {
+			traceName[numTraces++] = v;
+			++i;
 		} else if (!strcmp(a, "--reset") && v && sscanf(v, "%d:%d", &n, &f) == 2) {
 			gba[n].resetAt = f;
 			++i;
@@ -402,11 +421,20 @@ int main(int argc, char** argv) {
 		} else if (a[0] != '-' && !rom) {
 			rom = a;
 		} else {
+			fprintf(stderr, "bad option: %s\n", a);
 			usage();
 		}
 	}
 	if (!rom) {
 		usage();
+	}
+	for (int i = 0; i < numTraces; ++i) {
+		traceAddr[i] = symAddr(traceName[i]);
+		for (int j = 0; j < numSyms; ++j) {
+			if (!strcmp(syms[j].name, traceName[i])) {
+				traceSize[i] = syms[j].size;
+			}
+		}
 	}
 	symFrameDone = symAddr("frameDone");
 	symTimer = symAddr("universalTimer");
@@ -441,7 +469,10 @@ int main(int argc, char** argv) {
 		g->core->init(g->core);
 		mCoreInitConfig(g->core, NULL);
 		mCoreConfigSetValue(&g->core->config, "useBios", bios ? "1" : "0");
-		mCoreConfigSetValue(&g->core->config, "skipBios", "1");
+		const char* path = (i && rom2) ? rom2 : rom;
+		int noCart = !strcmp(path, "none");
+		// a Gameboy with no cartridge has to run its BIOS to wait for multiboot
+		mCoreConfigSetValue(&g->core->config, "skipBios", noCart ? "0" : "1");
 		mCoreLoadConfig(g->core);
 
 		g->video = calloc(GBA_VIDEO_HORIZONTAL_PIXELS * GBA_VIDEO_VERTICAL_PIXELS, sizeof(color_t));
@@ -454,8 +485,7 @@ int main(int argc, char** argv) {
 				return 2;
 			}
 		}
-		const char* path = (i && rom2) ? rom2 : rom;
-		if (strcmp(path, "none")) {
+		if (!noCart) {
 			struct VFile* vf = VFileOpen(path, O_RDONLY);
 			if (!vf || !g->core->loadROM(g->core, vf)) {
 				fprintf(stderr, "can't load ROM %s\n", path);
@@ -499,6 +529,20 @@ int main(int argc, char** argv) {
 	}
 	for (int i = 0; i < NUM_GBAS; ++i) {
 		mCoreThreadJoin(&gba[i].thread);
+	}
+
+	for (int i = 0; i < numSyms; ++i) {
+		if (syms[i].size <= 4) {
+			printf("%s:", syms[i].name);
+			for (int j = 0; j < NUM_GBAS; ++j) {
+				uint32_t v = 0;
+				for (uint32_t b = 0; b < syms[i].size; ++b) {
+					v |= gba[j].core->busRead8(gba[j].core, syms[i].addr + b) << (8 * b);
+				}
+				printf(" %x", v);
+			}
+			printf("\n");
+		}
 	}
 
 	// compare the two games frame by frame

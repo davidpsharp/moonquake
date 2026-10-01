@@ -24,6 +24,7 @@
 #define LINK_PEER_NONE      0   // nothing connected, or not in two player mode
 #define LINK_PEER_WAITING   1   // waiting for us to start a game
 #define LINK_PEER_PLAYING   2   // already started a game
+#define LINK_PEER_MULTIBOOT 3   // a Gameboy with no game, waiting to be sent one by multiboot
 
 // interrupt handlers, install on IRQ_SERIAL and IRQ_TIMER3
 void linkOnSerial(void);

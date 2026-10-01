@@ -35,6 +35,7 @@
 
 #define WORD_NONE           0xFFFF      // what's received from a Gameboy that isn't there
 #define WORD_WAITING        0x8001      // in two player mode, waiting to start a game
+#define WORD_BIOS_WAITING   0x0000      // what the BIOS sends while waiting to be multibooted
 #define WORD_IS_GAME(w)     (((w) & 0xC000) == 0x4000)
 #define WORD_FRAME(w)       (((w) >> 12) & 3)
 #define WORD_INPUT(w)       (((w) >> 6) & 63)
@@ -100,9 +101,9 @@ void linkStart(void)
     sendWord = WORD_WAITING;
     receivedWord = WORD_NONE;
 
-    REG_RCNT = 0;   // serial mode
+    REG_RCNT = R_MULTI;
+    REG_SIOMLT_SEND = sendWord;     // before multiplayer mode so 0 is never sent, see WORD_BIOS_WAITING
     REG_SIOCNT = SIO_MULTI | SIO_115200 | SIO_IRQ;
-    REG_SIOMLT_SEND = sendWord;
 
     REG_TM3CNT_H = 0;
     REG_TM3CNT_L = -TRANSFER_INTERVAL;
@@ -131,6 +132,8 @@ int linkPeerState(void)
         return LINK_PEER_WAITING;
     if( WORD_IS_GAME(word) )
         return LINK_PEER_PLAYING;
+    if( word == WORD_BIOS_WAITING )
+        return LINK_PEER_MULTIBOOT;
     return LINK_PEER_NONE;
 }
 

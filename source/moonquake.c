@@ -16,7 +16,6 @@
 // need text to type everything on that screen if button pressed
 // player slows down when moving over a column full of monsters (with 3 or more) - is collision detection too intensive
 // needs option to save game, password level or some way so player doesn't have to start from scratch
-// compress graphics and samples so can multiboot game?
 // compile with optimisation turned on
 // length of token sample wrong?
 // have a pling noise when press A on 1 player/instructions option on menu
@@ -30,7 +29,6 @@
 // get rid of where have set area[][] value before calling drawobject()
 // does changing man's direction variable from x and y change to a single direction variable like robots
 // do the graphics need gamma correcting to look ok on GBA hardware? http://www.pineight.com/gba/
-// would be good to have the 2 player mode but would need to load itself into multiboot zone of another gameboy advance
 // should wait be be != 160 instead of >= so if gets called in vblank already it waits til the next time vblanks starts?
 // need to get the timings of player and droid movement as well as all other timings more similar to Acorn, need real hardware
 // should OAM be volatile in the sprites.h file?
@@ -49,17 +47,18 @@
 #include "soundbank_bin.h"
 
 #include "link.h"
+#include "multiboot.h"
  
 
-// include graphics data
+// include graphics data (bitmaps are LZ77 compressed, see Makefile)
 extern const unsigned short background_Palette[256];
-extern const unsigned char background_Bitmap[15360];
 extern const unsigned short sprites_Palette[256];
-extern const unsigned char sprites_Bitmap[26112];
 extern const unsigned short titlescreen_Palette[256];
-extern const unsigned char titlescreen_Bitmap[38400];
 extern const unsigned short credits_Palette[256];
-extern const unsigned char credits_Bitmap[38400];
+#include "background_lz.h"
+#include "sprites_lz.h"
+#include "titlescreen_lz.h"
+#include "credits_lz.h"
 
 
 
@@ -1012,9 +1011,8 @@ void displayTiledBitmap(const unsigned char* bitmap, const unsigned short* palet
     SetMode(SCREENMODE1 | BG1ENABLE | OBJENABLE | OBJMAP1D );
     
     // load tile data (16 bits at a time)
-    u16* tileData = (u16*)bitmap;
+    LZ77UnCompVram(bitmap, tiles);
     int i;
-    for(i=0; i<19200; i++) tiles[i]=tileData[i];
     
     // position tiles (optimised version of loop below)
     int x,y;
@@ -2126,16 +2124,13 @@ void initialiseLevel(void)
     
    	// load background tile data
     // tile data appears to have to be loaded 16 bits at a time, why????
-    u16* tileData = (u16*)background_Bitmap;
-    //const unsigned char background_Bitmap
-    for(i=0; i<15360/2; i++) tiles[i]=tileData[i];
+    LZ77UnCompVram(background_lz, tiles);
     
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
     // load sprite tile data
-    u16* sprTileData = (u16*)sprites_Bitmap;
-    for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
+    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
     
     generateLevel();
     
@@ -2186,7 +2181,7 @@ bool shouldGameContinue(void)
 	
 	// assume already faded to black
 	
-	displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
+	displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
         
     // load sprite palette
     int i;
@@ -3059,8 +3054,7 @@ void displayText()
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
     // load sprite tile data
-    u16* sprTileData = (u16*)sprites_Bitmap;
-    for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
+    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
     
     // tile palette black
     for(i=0; i<256; i++)
@@ -3156,7 +3150,7 @@ void startGameAndManageContinues()
             	else
             	{
             		// credits screen taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
-                	displayTiledBitmap(credits_Bitmap, credits_Palette);
+                	displayTiledBitmap(credits_lz, credits_Palette);
             		
                     u32 spriteNum = OAM_LETTERS;
                     writeText(-1, 30, "CONGRATULATIONS!", &spriteNum);
@@ -3228,30 +3222,46 @@ void onVBlank() {
     linkOnVBlank();
 }
 
-// show the waiting screen until the other Gameboy's ready to play too
+// replace the text on the waiting screen
+void waitingMessage(const char* line1, const char* line2)
+{
+    turnOffAllSprites();
+    
+    u32 spriteNum = OAM_LETTERS;
+    writeText(-1, 30, "2 PLAYER LINK", &spriteNum);
+    writeText(-1, 60, line1, &spriteNum);
+    writeText(-1, 80, line2, &spriteNum);
+    writeText(-1, 120, "PRESS B TO CANCEL", &spriteNum);
+}
+
+bool bPressed(void)
+{
+    return KEY_DOWN( KEYB );
+}
+
+// show the waiting screen until the other Gameboy's ready to play too, if it's waiting to be
+// sent the game by multiboot then send it
 // returns FALSE if the player gives up waiting
 bool waitForOtherPlayer(void)
 {
-    displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
+    displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
     
     int i;
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
     
-    u32 spriteNum = OAM_LETTERS;
-    writeText(-1, 30, "2 PLAYER LINK", &spriteNum);
-    writeText(-1, 60, "WAITING FOR THE", &spriteNum);
-    writeText(-1, 80, "OTHER PLAYER...", &spriteNum);
-    writeText(-1, 120, "PRESS B TO CANCEL", &spriteNum);
+    waitingMessage("WAITING FOR THE", "OTHER PLAYER...");
     
     linkStart();
     
     bool ready;
+    int multibootWaitingTime = 0;
     for( ; ; )
     {
         mmFrame();
         VBlankIntrWait();
         
-        if( linkPeerState() != LINK_PEER_NONE )
+        int peer = linkPeerState();
+        if( LINK_PEER_WAITING == peer || LINK_PEER_PLAYING == peer )
         {
             ready = TRUE;
             break;
@@ -3260,6 +3270,33 @@ bool waitForOtherPlayer(void)
         {
             ready = FALSE;
             break;
+        }
+        
+        // the Gameboy with the small plug in sends the game, once sure the other's waiting for it
+        if( LINK_PEER_MULTIBOOT == peer && linkIsMaster() )
+            multibootWaitingTime++;
+        else
+            multibootWaitingTime = 0;
+        
+        if( multibootWaitingTime > 30 )
+        {
+            waitingMessage("SENDING THE GAME TO", "THE OTHER GAMEBOY...");
+            
+            linkStop();
+            int result = multibootSend(bPressed);
+            if( MULTIBOOT_CANCELLED == result )
+            {
+                ready = FALSE;
+                break;
+            }
+            
+            if( MULTIBOOT_SENT == result )
+                waitingMessage("SENT! WAITING FOR THE", "OTHER PLAYER...");
+            else
+                waitingMessage("SENDING FAILED,", "TRYING AGAIN...");
+            
+            linkStart();
+            multibootWaitingTime = 0;
         }
     }
     
@@ -3377,9 +3414,8 @@ int main(void)
     initSprites();
     
     // load sprite tile data
-    u16* sprTileData = (u16*)sprites_Bitmap;
     int i;
-    for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
+    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
     
     // init sound fx
     irqInit();
@@ -3400,12 +3436,18 @@ int main(void)
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
+    // a Gameboy that's just been sent the game over the link cable goes straight to
+    // the two player game
+    if( multibooted() )
+    {
+        twoPlayerGame();
+    }
     // skip title screens if in development
-    if(!inDevelopment)
+    else if(!inDevelopment)
     {
         // credits screen image taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
         // also available at http://www.staticfiends.com/galleries/government_galleries/0014.jpg
-        displayTiledBitmap(credits_Bitmap, credits_Palette);
+        displayTiledBitmap(credits_lz, credits_Palette);
 
         // display 1st message        
         u32 spriteNum = OAM_LETTERS;
@@ -3454,10 +3496,9 @@ int main(void)
             int i;
             for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
             // load sprite tile data
-            u16* sprTileData = (u16*)sprites_Bitmap;
-            for(i=0; i<(26112/2); i++) OAMdata[i] = sprTileData[i];
+            LZ77UnCompVram(sprites_lz, (void*)OAMdata);
             
-            displayTiledBitmap(titlescreen_Bitmap, titlescreen_Palette);
+            displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
             
             const int numberOfOptions = 4;
 
