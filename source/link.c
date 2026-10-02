@@ -83,6 +83,7 @@ static volatile u32 failedTransfers;    // and of ones with the error flag set (
 static volatile u32 vblanks;
 static bool linkActive;
 
+static void (*idle)(void);              // called once a frame while waiting for the other Gameboys
 static u8 playing;                      // slots in the game
 static u8 outOfGame;                    // slots whose players are out, their input isn't needed
 static u8 dropped;                      // slots dropped during the last exchange
@@ -408,8 +409,8 @@ static int waitForFrame(bool finishing, u8* inputs)
                 }
                 inputs[i] = input;
             }
-            else if( finishing && word == WORD_WAITING )
-                inputs[i] = 0;
+            else if( finishing && (word == WORD_WAITING || word == WORD_NONE) )
+                inputs[i] = 0;  // finished (one that's waiting may look like an empty slot, see linkOnSerial())
             else if( (outOfGame & (1 << i)) && (!WORD_IS_GAME(word) || vblanks - startTime > OUT_PLAYER_TIMEOUT) )
             {
                 // A player who's out has left, or been unplugged: stop waiting for that
@@ -431,9 +432,18 @@ static int waitForFrame(bool finishing, u8* inputs)
         if( vblanks - lastTransferTime > NO_TRANSFERS_TIMEOUT || vblanks - startTime > NO_PROGRESS_TIMEOUT )
             return LINK_LOST;
 
-        // sleep until the next interrupt
+        // sleep until the next interrupt, keeping whatever has to be done every frame going
+        // if the wait goes past a vblank
+        u32 vblankBefore = vblanks;
         Halt();
+        if( idle && vblanks != vblankBefore )
+            idle();
     }
+}
+
+void linkSetIdle(void (*function)(void))
+{
+    idle = function;
 }
 
 void linkPlayerOut(int slot)

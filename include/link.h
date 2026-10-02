@@ -65,6 +65,10 @@ int linkExchange(u8 input, u8* inputs);
 // end the game on all the Gameboys at the same frame, goes back to waiting
 void linkEndGame(void);
 
+// something to call each frame while waiting for the other Gameboys (e.g. to keep the sound
+// going), as the wait can go past the end of a frame
+void linkSetIdle(void (*function)(void));
+
 // call on every Gameboy at the same frame when a player's out of the game: from then on their
 // input isn't needed, so if their Gameboy leaves or is unplugged the others carry on
 void linkPlayerOut(int slot);

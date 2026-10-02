@@ -323,6 +323,25 @@ static void frameCallback(struct mCoreThread* thread) {
 	struct mCore* core = g->core;
 	int frame = g->frames++;
 
+	// (drained from the start: once mGBA's buffer's full it stops producing sound)
+	if (g->audio) {
+		short buf[2048 * 2];
+		struct blip_t* left = core->getAudioChannel(core, 0);
+		struct blip_t* right = core->getAudioChannel(core, 1);
+		int n = blip_samples_avail(left);
+		if (n > 2048) {
+			n = 2048;
+		}
+		blip_read_samples(left, buf, n, 1);
+		blip_read_samples(right, buf + 1, n, 1);
+		fwrite(buf, 4, n, g->audio);
+		g->audioSamples += n;
+	}
+	if (getenv("LINKTEST_AUDIO_DEBUG") && (frame == 100 || frame == 6000)) {
+		struct GBA* b = core->board;
+		fprintf(stderr, "gba%d frame %d: masterVolume %d, mute %d\n", g->id, frame, b->audio.masterVolume, core->opts.mute);
+	}
+
 	// On real hardware a Gameboy that isn't player 1 reads its SI pin low during transfers
 	// (player 1 starts one about every millisecond), mGBA keeps it high: flip it at random.
 	// (Not before a Gameboy with no cartridge has the game: its BIOS reads SI too, and this
@@ -477,19 +496,6 @@ static void frameCallback(struct mCoreThread* thread) {
 				printf("gba%d frame %d: dead robot %d's sprite on screen at %d,%d, char %d\n", g->id, frame, i, x, y, a2 & 1023);
 			}
 		}
-	}
-	if (g->audio) {
-		short buf[2048 * 2];
-		struct blip_t* left = core->getAudioChannel(core, 0);
-		struct blip_t* right = core->getAudioChannel(core, 1);
-		int n = blip_samples_avail(left);
-		if (n > 2048) {
-			n = 2048;
-		}
-		blip_read_samples(left, buf, n, 1);
-		blip_read_samples(right, buf + 1, n, 1);
-		fwrite(buf, 4, n, g->audio);
-		g->audioSamples += n;
 	}
 
 	if ((inGame || (g->botAlways && frame > 700)) && !matchOver) {

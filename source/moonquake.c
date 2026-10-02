@@ -3673,6 +3673,8 @@ u8 waitForPlayers(void)
     u8 playing = 0;
     int shownMask = -1;
     int shownMaster = -1;
+    int seenMask = -1;          // who's waiting, and for how many frames it's been the same
+    int seenFrames = 0;
     int multibootWaitingTime = 0;
     int probeTime = 0;
     bool startReleased = FALSE;
@@ -3686,6 +3688,19 @@ u8 waitForPlayers(void)
         
         bool master = linkIsMaster();
         u8 waiting = linkWaitingMask();
+        
+        // only take notice of a change in who's waiting once it's lasted half a second: a
+        // Gameboy can miss a transfer or two, and they look like empty slots while the master's
+        // looking for ones to send the game to
+        if( waiting != seenMask )
+        {
+            seenMask = waiting;
+            seenFrames = 0;
+        }
+        else if( seenFrames < 30 )
+            seenFrames++;
+        if( seenFrames < 30 && shownMask >= 0 )
+            waiting = shownMask;
         
         // keep the screen up to date with who's there
         if( master != shownMaster || (master && waiting != shownMask) )
@@ -3923,6 +3938,9 @@ int main(void)
     // link cable interrupts, only enabled while playing a linked game
     irqSet( IRQ_SERIAL, linkOnSerial );
     irqSet( IRQ_TIMER3, linkOnTimer );
+    // and keep the sound going while waiting on the link (maxmod needs mmFrame() every frame,
+    // without it the last bit of sound plays over and over)
+    linkSetIdle( mmFrame );
 
     // initialise maxmod with soundbank and 8 channels
     mmInitDefault( (mm_addr)soundbank_bin, 8 );
