@@ -12,7 +12,6 @@
 // display score
 // sometimes see dead person sprites appear periodically - never seen before, dodgy copy/init of OAM RAM having changed type
 // cheat menu from the start menu for debugging the gameplay
-// sometimes clear levels don't end, something to do with user dying??
 // need text to type everything on that screen if button pressed
 // player slows down when moving over a column full of monsters (with 3 or more) - is collision detection too intensive
 // needs option to save game, password level or some way so player doesn't have to start from scratch
@@ -1317,9 +1316,11 @@ void nuke()
             {
                 drawObject(x,y,T_RUBBLE_EXPLO_START);
             }
-            else if(T_BLOCK != area[x][y])
+            else if(T_BLOCK != area[x][y] &&
+                    !(area[x][y] >= T_RUBBLE_EXPLO_START && area[x][y] <= T_RUBBLE_EXPLO_END))
             {
-            	// fill in all spaces with explosion (basically only do odd numbered spaces)
+            	// fill in all spaces with explosion (leaving rubble that's already exploding,
+            	// see detonateBomb()) (basically only do odd numbered spaces)
                 if(y & 1)
                 {
                     // every other tile is space
@@ -1605,6 +1606,11 @@ void detonateBomb(u8 x, u8 y)
                     // but hit rubble so discontinue explosion
                     break;
                 }
+                
+                // rubble that's already exploding stops the flame too: drawing over it would
+                // lose it before it's counted as cleared, and the level would never end
+                if(area[nx][ny] >= T_RUBBLE_EXPLO_START && area[nx][ny] <= T_RUBBLE_EXPLO_END)
+                    break;
                 
                 // if explosion hits another bomb
                 if(area[nx][ny] >= T_BOMB_LARGE && area[nx][ny] <= T_BOMB_SMALL)
