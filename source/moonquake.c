@@ -3039,15 +3039,9 @@ int handleLinkedDeaths(u8 unplugged)
     }
     showGameBanner(line1, line2);
     
-    if(nuked)
-    {
-        // the blast has cleared the level so go on to the next
-        rubbleCount = 0;
-        for(i=0; i<MAX_PLAYERS; i++)
-            if(player[i].inGame && player[i].lifeStatus != OUT)
-                player[i].lifeStatus = ALIVE;
-        return FALSE;
-    }
+    // after a reactor explosion play goes on on the same board, the survivors come back to
+    // life like anyone else (explosions go back to normal, and halos protect again)
+    nuked = FALSE;
     
     // as in a single player game, the dead come back to life where they died with a halo
     robotsHalt = FALSE;
@@ -3178,20 +3172,14 @@ void gameLoop(void)
         {
             // deal with deaths once no one's still dying, so that two players dying at
             // about the same time is a draw rather than whoever finished dying first losing
+            // (clearing the rubble doesn't end a linked game's level, it goes on until only
+            // one player's left)
             if( !anyPlayer(DYING) )
             {
                 if( anyPlayer(DEAD) )
                 {
                     if( handleLinkedDeaths(0) )
                         return;
-                }
-                
-                if( rubbleCount <= 0 )
-                {
-                    // level completed
-                    fadeToBlack();
-                    turnOffAllSprites();
-                    return;
                 }
             }
         }
@@ -3588,8 +3576,21 @@ void showSending(void)
     copyAllOAM();
 }
 
-// letters kept for the link diagnostics
-#define OAM_DIAGNOSTICS 76
+// letters kept for the level choice on the waiting screen, and the link diagnostics
+#define OAM_LEVEL_CHOICE    68
+#define OAM_DIAGNOSTICS     88
+#define DIAGNOSTICS_LETTERS 26
+
+// player 1's waiting screen: the level to play on
+void showLevelChoice(u8 level)
+{
+    char text[] = "LEVEL X - LEFT/RIGHT";
+    text[6] = '0' + level;
+    turnOffSprites(OAM_LEVEL_CHOICE, OAM_DIAGNOSTICS);
+    u32 spriteNum = OAM_LEVEL_CHOICE;
+    writeTextImmediately(-1, 106, text, &spriteNum, -1);
+    copyAllOAM();
+}
 
 // while L's held on the waiting screen, show what each slot on the cable is sending and
 // whether the hardware says all the Gameboys on it are ready, for checking a link setup:
@@ -3604,7 +3605,7 @@ void showLinkDiagnostics(bool show)
     {
         if(shown)
         {
-            turnOffSprites(OAM_DIAGNOSTICS, OAM_LASTLETTER + 1);
+            turnOffSprites(OAM_DIAGNOSTICS, OAM_DIAGNOSTICS + DIAGNOSTICS_LETTERS);
             copyAllOAM();
             shown = FALSE;
         }
@@ -3641,10 +3642,10 @@ void showLinkDiagnostics(bool show)
         bad /= 10;
     }
     
-    turnOffSprites(OAM_DIAGNOSTICS, OAM_LASTLETTER + 1);
+    turnOffSprites(OAM_DIAGNOSTICS, OAM_DIAGNOSTICS + DIAGNOSTICS_LETTERS);
     u32 spriteNum = OAM_DIAGNOSTICS;
-    writeTextImmediately(-1, 102, text, &spriteNum, -1);
-    writeTextImmediately(-1, 116, counts, &spriteNum, -1);
+    writeTextImmediately(-1, 0, text, &spriteNum, -1);
+    writeTextImmediately(-1, 144, counts, &spriteNum, -1);
     copyAllOAM();
     shown = TRUE;
 }
@@ -3661,8 +3662,11 @@ int countBits(u8 mask)
 // gives up waiting
 // The master (player 1) sees who's connected and starts the game, and sends the game by
 // multiboot to any Gameboys with no cartridge that are waiting for it.
-u8 waitForPlayers(void)
+u8 waitForPlayers(u8* chosenLevel)
 {
+    // the level player 1 chooses, remembered from one game to the next
+    static u8 level;
+
     displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
     
     int i;
@@ -3711,6 +3715,7 @@ u8 waitForPlayers(void)
                 players[9] = '0' + countBits(waiting);
                 waitingMessage("YOU ARE GREEN", players,
                                countBits(waiting) > 1 ? "PRESS START TO PLAY" : "WAITING FOR PLAYERS...");
+                showLevelChoice(level);
             }
             else
                 waitingMessage("WAITING FOR GREEN", "TO START THE GAME...", "");
@@ -3723,10 +3728,22 @@ u8 waitForPlayers(void)
         
         if(!master)
         {
-            playing = linkGameStarted();
+            playing = linkGameStarted(chosenLevel);
             if(playing)
                 break;
             continue;
+        }
+        
+        // left and right choose the level to play on
+        static bool dpadReleased;
+        if( !KEY_DOWN( KEYLEFT ) && !KEY_DOWN( KEYRIGHT ) )
+            dpadReleased = TRUE;
+        else if( dpadReleased )
+        {
+            dpadReleased = FALSE;
+            level = ( level + (KEY_DOWN( KEYRIGHT ) ? 1 : NUM_LEVELS - 1) ) % NUM_LEVELS;
+            menuBlip();
+            showLevelChoice(level);
         }
         
         // master starts the game when start is pressed (once it's been let go after the menu)
@@ -3740,9 +3757,10 @@ u8 waitForPlayers(void)
             if( waiting != shownMask )
                 continue;
             
-            if( linkStartGame(waiting) )
+            if( linkStartGame(waiting, level) )
             {
                 playing = waiting;
+                *chosenLevel = level;
                 break;
             }
             shownMask = -1;
@@ -3795,7 +3813,8 @@ u8 waitForPlayers(void)
 // play a game against other Gameboys over the link cable
 void linkGame(void)
 {
-    u8 playing = waitForPlayers();
+    u8 chosenLevel;
+    u8 playing = waitForPlayers(&chosenLevel);
     if(!playing)
         return;
     
@@ -3830,24 +3849,18 @@ void linkGame(void)
     initialiseGame();
     level = 0;
     
-    bool firstLevel = TRUE;
-    while( !linkLost )
+    // the whole game's played on the level player 1 chose
+    level = chosenLevel % NUM_LEVELS;
+    if( !linkLost )
     {
         for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
         
         u32 spriteNum = OAM_LETTERS;
-        if(firstLevel)
-        {
-            char youAre[20];
-            strcpy(youAre, "YOU ARE ");
-            strcat(youAre, playerName[localPlayer]);
-            writeText(-1, 40, youAre, &spriteNum);
-            writeText(-1, 70, "LAST ONE ALIVE WINS", &spriteNum);
-        }
-        else
-        {
-            writeText(-1, 40, "LEVEL COMPLETE", &spriteNum);
-        }
+        char youAre[20];
+        strcpy(youAre, "YOU ARE ");
+        strcat(youAre, playerName[localPlayer]);
+        writeText(-1, 40, youAre, &spriteNum);
+        writeText(-1, 70, "LAST ONE ALIVE WINS", &spriteNum);
         char levelMessage[] = "LEVEL X";
         levelMessage[6] = '0' + level;
         writeText(-1, 100, levelMessage, &spriteNum);
@@ -3860,18 +3873,10 @@ void linkGame(void)
         
         nuked = FALSE;
         for(i=0; i<MAX_PLAYERS; i++)
-            if(player[i].lifeStatus != OUT)
-                player[i].lifeStatus = ALIVE;
+            player[i].lifeStatus = ALIVE;
         initialiseLevel();
-        firstLevel = FALSE;
         
         gameLoop();
-        
-        if(matchOver || leftGame)
-            break;
-        
-        // level completed so on to the next, going round again after the last
-        level = (level + 1) % NUM_LEVELS;
     }
     
     if(leftGame)
@@ -3906,6 +3911,106 @@ void linkGame(void)
 
 // title menu options
 enum { MENU_CONTINUE, MENU_START, MENU_DEEP_END, MENU_INSTRUCTIONS, MENU_LINK };
+
+// For testing: L R L R SELECT on the title menu turns on a cheat that lets a single player game
+// start on any level (until the Gameboy's switched off).
+bool cheatMode;
+
+// watch the buttons on the title menu for the cheat, call once a frame
+void checkCheatSequence(void)
+{
+    static const u16 sequence[] = { KEYL, KEYR, KEYL, KEYR, KEYSELECT };
+    static int position;
+    static u16 lastKeys;
+    
+    u16 keys = (~KEYS) & (KEYL | KEYR | KEYSELECT);
+    u16 pressed = keys & ~lastKeys;
+    lastKeys = keys;
+    if( !pressed )
+        return;
+    
+    if( pressed == sequence[position] )
+    {
+        if( ++position == sizeof(sequence) / sizeof(sequence[0]) )
+        {
+            position = 0;
+            cheatMode = TRUE;
+            // a double blip to say so
+            menuBlip();
+            delay(6);
+            menuBlip();
+        }
+    }
+    else
+        position = (pressed == sequence[0]) ? 1 : 0;
+}
+
+// with the cheat on: choose the level to start a single player game on, -1 if B's pressed
+int chooseStartLevel(void)
+{
+    displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
+    int i;
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
+    
+    u32 spriteNum = OAM_LETTERS;
+    writeText(-1, 30, "CHEAT MODE", &spriteNum);
+    writeText(-1, 90, "LEFT/RIGHT, A TO START", &spriteNum);
+    writeText(-1, 120, "B TO GO BACK", &spriteNum);
+    u32 levelSprites = spriteNum;
+    
+    int level = 0;
+    bool redraw = TRUE;
+    bool released = FALSE;
+    int result;
+    for( ; ; )
+    {
+        if(redraw)
+        {
+            char text[] = "START ON LEVEL X";
+            text[15] = '0' + level;
+            turnOffSprites(levelSprites, OAM_LASTLETTER + 1);
+            spriteNum = levelSprites;
+            writeTextImmediately(-1, 60, text, &spriteNum, -1);
+            copyAllOAM();
+            redraw = FALSE;
+        }
+        
+        mmFrame();
+        VBlankIntrWait();
+        
+        // (wait for the button that chose START GAME to be let go first)
+        if( !((~KEYS) & 0x3FF) )
+        {
+            released = TRUE;
+            continue;
+        }
+        if( !released )
+            continue;
+        released = FALSE;
+        
+        if( KEY_DOWN( KEYA ) || KEY_DOWN( KEYSTART ) )
+        {
+            result = level;
+            break;
+        }
+        if( KEY_DOWN( KEYB ) )
+        {
+            result = -1;
+            break;
+        }
+        if( KEY_DOWN( KEYLEFT ) || KEY_DOWN( KEYRIGHT ) )
+        {
+            level = ( level + (KEY_DOWN( KEYRIGHT ) ? 1 : NUM_LEVELS - 1) ) % NUM_LEVELS;
+            menuBlip();
+            redraw = TRUE;
+        }
+    }
+    
+    fadeToBlack();
+    turnOffAllSprites();
+    copyAllOAM();
+    return result;
+}
 
 int main(void)
 {
@@ -4136,6 +4241,8 @@ int main(void)
                 {
                     buttonReleased = 1;
                 }
+                
+                checkCheatSequence();
 
                 
             }
@@ -4161,7 +4268,11 @@ int main(void)
         switch(selected)
         {
             case MENU_CONTINUE: startGameAndManageContinues(TRUE); break;
-            case MENU_START: startLevel = 0; startGameAndManageContinues(FALSE); break;
+            case MENU_START:
+                startLevel = cheatMode ? chooseStartLevel() : 0;
+                if( startLevel >= 0 )
+                    startGameAndManageContinues(FALSE);
+                break;
             case MENU_DEEP_END: startLevel = 7; startGameAndManageContinues(FALSE); break;
             case MENU_INSTRUCTIONS: displayStory(); break;
             case MENU_LINK: linkGame(); break;

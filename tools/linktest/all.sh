@@ -36,6 +36,7 @@ run() {
 run "2 players" --gbas 2
 run "3 players" --gbas 3
 run "4 players" --gbas 4
+run "3 players, level 6" --gbas 3 --level 6
 run "4 players, pause" --gbas 4 --pause 2:400
 run "4 players, one switched off" --gbas 4 --reset 3:1500 --frames 2000
 run "4 players, out players leave" --gbas 4 --leave 1 --leave 2 --leave 3

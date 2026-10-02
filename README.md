@@ -13,6 +13,10 @@ Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
 
 [Homepage](https://davidsharp.com/gba/)
 
+## cheat for testing
+On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Until the Game Boy's
+switched off, START GAME then asks which level to start on.
+
 ## saving a game
 In a single player game, pause with START and press SELECT to save and go back to the title
 menu. CONTINUE SAVED GAME then carries on from exactly where you were; the save's used up when
@@ -22,9 +26,10 @@ SRAM (a Game Boy that was sent the game by multiboot has nowhere to save).
 ## 2-4 player link game
 Connect up to four Game Boy Advances with link cables and choose **2-4 PLAYER LINK** on each. The
 Game Boy with the small purple plug in is player 1 (green): it shows who's connected and starts the
-game with START. Green starts bottom right, red top left, orange top right and pink bottom left,
-and it's the normal game with everyone dropping bombs: 3 lives each, run out and you're out,
-last one alive wins.
+game with START, choosing the level to play on with LEFT and RIGHT first. Green starts bottom
+right, red top left, orange top right and pink bottom left, and it's the normal game with everyone
+dropping bombs: 3 lives each, run out and you're out, last one alive wins. The game stays on that
+level until then, clearing the rubble doesn't end it; a reactor explosion costs everyone a life.
 
 If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
 others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.

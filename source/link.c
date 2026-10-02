@@ -46,10 +46,10 @@
 
 #define WORD_NONE           0xFFFF      // what's received from a Gameboy that isn't there
 #define WORD_WAITING        0x8001      // waiting to start a game
-#define WORD_START          0x9000      // master starting a game, low 4 bits are the slots playing
+#define WORD_START          0x9000      // master starting a game, bits 4-7 the level, 0-3 the slots playing
 #define WORD_JOINED         0x8002      // joined the game the master's starting
 #define WORD_BIOS_WAITING   0x0000      // what the BIOS sends while waiting to be multibooted
-#define WORD_IS_START(w)    (((w) & 0xFFF0) == WORD_START)
+#define WORD_IS_START(w)    (((w) & 0xFF00) == WORD_START)
 #define WORD_IS_GAME(w)     (((w) & 0xC000) == 0x4000)
 #define WORD_FRAME(w)       (((w) >> 12) & 3)
 #define WORD_INPUT(w)       (((w) >> 6) & 63)
@@ -274,9 +274,9 @@ static void beginGame(u8 mask)
     previousInput = 0;
 }
 
-bool linkStartGame(u8 mask)
+bool linkStartGame(u8 mask, u8 level)
 {
-    sendWord = WORD_START | mask;
+    sendWord = WORD_START | ((level & 15) << 4) | mask;
 
     // wait for all the others to join (or, quick off the mark, already be sending game words)
     u32 startTime = vblanks;
@@ -302,7 +302,7 @@ bool linkStartGame(u8 mask)
     return TRUE;
 }
 
-u8 linkGameStarted(void)
+u8 linkGameStarted(u8* level)
 {
     // while the master's sending the game by multiboot anything could go past, so make sure
     // it's really saying start
@@ -310,6 +310,7 @@ u8 linkGameStarted(void)
     if( WORD_IS_START(word) && (word & (1 << linkSlot())) && masterRepeats >= 16 )
     {
         sendWord = WORD_JOINED;
+        *level = (word >> 4) & 15;
         beginGame(word & 15);
         return playing;
     }

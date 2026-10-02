@@ -53,11 +53,12 @@ bool linkAllReady(void);
 // and how many transfers have finished, or failed (the error flag set), since the game started
 u32 linkTransfers(bool failed);
 
-// master: start a game with the Gameboys in the slots given, returns FALSE if they don't all
-// join in
-bool linkStartGame(u8 mask);
-// others: the slots in the game if the master's started one including this Gameboy, else 0
-u8 linkGameStarted(void);
+// master: start a game on the level given (0-15) with the Gameboys in the slots given, returns
+// FALSE if they don't all join in
+bool linkStartGame(u8 mask, u8 level);
+// others: the slots in the game if the master's started one including this Gameboy, else 0,
+// and the level it's on
+u8 linkGameStarted(u8* level);
 
 // swap this frame's input for all the other players', which are put in inputs[slot]
 // returns LINK_LOST if any of them stops answering, else 0

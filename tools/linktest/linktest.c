@@ -72,6 +72,8 @@ struct Gba {
 	int pauseAt;            // game frame to press start at, 0 for never
 	int pauseStep;
 	int lobbyPress;
+	int lobbyRights;
+	int lobbyWait;
 	int leave;              // tap select during the game, so leave once out
 	int unplugWhenOut;      // pull the cable out once out of the game
 	int unplugAt;           // pull the cable out at this frame, 0 for never
@@ -126,6 +128,7 @@ static uint32_t symAddr(const char* name) {
 	return 0;
 }
 static int lobbyPlayers;                // GBA 0 presses start in the lobby when this many are waiting
+static int lobbyLevel;                  // and first presses right this many times to choose the level
 static const char* carts[MAX_GBAS_TESTED];
 static int maxFrames = 20000;
 static uint32_t traceAddr[4], traceSize[4], traceLast[MAX_GBAS_TESTED][4];
@@ -430,6 +433,17 @@ static void frameCallback(struct mCoreThread* thread) {
 				++waiting;
 			}
 		}
+		if (waiting >= lobbyPlayers && lobbyLevel && g->lobbyWait++ < 120) {
+			// give the screen time to show everyone before choosing the level (it doesn't
+			// read buttons while it's writing)
+			core->setKeys(core, 0);
+			return;
+		}
+		if (waiting >= lobbyPlayers && g->lobbyRights < lobbyLevel * 8) {
+			// choose the level: tap right (pressed 4 frames, let go 4)
+			core->setKeys(core, (g->lobbyRights++ % 8) < 4 ? KEY_RIGHT : 0);
+			return;
+		}
 		if (waiting >= lobbyPlayers) {
 			// tap start (the lobby wants it pressed after being let go)
 			if (!g->lobbyPress++) {
@@ -546,6 +560,7 @@ static void usage(void) {
 	        "  --si-flicker           make the other Gameboys' SI bit read low at random, as on real\n"
 	        "                         hardware during transfers\n"
 	        "  --lobby N              GBA 0 presses start in the lobby once N players are waiting\n"
+	        "  --level N              and first chooses level N (presses right N times)\n"
 	        "                         (needs --info receivedWord=...)\n"
 	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
@@ -637,6 +652,8 @@ int main(int argc, char** argv) {
 			++i;
 		} else if (!strcmp(a, "--si-flicker")) {
 			siFlicker = 1;
+		} else if (!strcmp(a, "--level") && v) {
+			lobbyLevel = atoi(v); ++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
 		} else if (!strcmp(a, "--sym") && v && numSyms < MAX_SYMS) {
