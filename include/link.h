@@ -46,6 +46,10 @@ bool linkIsMaster(void);
 u8 linkWaitingMask(void);
 // TRUE if there's a Gameboy with no game waiting to be sent one by multiboot
 bool linkMultibootWaiting(void);
+// for checking a link setup: the last word received from a slot (0xFFFF if nothing there),
+// and whether the hardware says every Gameboy on the cable is ready
+u16 linkSlotWord(int slot);
+bool linkAllReady(void);
 
 // master: start a game with the Gameboys in the slots given, returns FALSE if they don't all
 // join in

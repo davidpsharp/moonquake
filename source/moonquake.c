@@ -3576,6 +3576,66 @@ bool bPressed(void)
     return KEY_DOWN( KEYB );
 }
 
+// once there are Gameboys to send the game to (written at once, the handshake's under way)
+void showSending(void)
+{
+    turnOffAllSprites();
+    u32 spriteNum = OAM_LETTERS;
+    writeTextImmediately(-1, 20, "2-4 PLAYER LINK", &spriteNum, -1);
+    writeTextImmediately(-1, 50, "SENDING THE GAME TO", &spriteNum, -1);
+    writeTextImmediately(-1, 70, "THE OTHER GAMEBOYS...", &spriteNum, -1);
+    writeTextImmediately(-1, 130, "PRESS B TO CANCEL", &spriteNum, -1);
+    copyAllOAM();
+}
+
+// letters kept for the link diagnostics
+#define OAM_DIAGNOSTICS 84
+
+// while L's held on the waiting screen, show what each slot on the cable is sending and
+// whether the hardware says all the Gameboys on it are ready, for checking a link setup:
+// 8001 waiting to play, 0000 the BIOS waiting to be sent the game, FFFF nothing there
+void showLinkDiagnostics(bool show)
+{
+    static bool shown;
+    static int count;
+    
+    if( !show )
+    {
+        if(shown)
+        {
+            turnOffSprites(OAM_DIAGNOSTICS, OAM_LASTLETTER + 1);
+            copyAllOAM();
+            shown = FALSE;
+        }
+        return;
+    }
+    
+    if( shown && ++count < 6 )
+        return;
+    count = 0;
+    
+    static const char hex[] = "0123456789ABCDEF";
+    char text[20];
+    int n = 0;
+    int slot;
+    for(slot=1; slot<4; slot++)
+    {
+        u16 word = linkSlotWord(slot);
+        int digit;
+        for(digit=3; digit>=0; digit--)
+            text[n++] = hex[ (word >> (digit * 4)) & 15 ];
+        text[n++] = ' ';
+    }
+    text[n++] = linkAllReady() ? 'R' : '-';
+    text[n] = 0;
+    
+    turnOffSprites(OAM_DIAGNOSTICS, OAM_LASTLETTER + 1);
+    u32 spriteNum = OAM_DIAGNOSTICS;
+    writeTextImmediately(-1, 106, text, &spriteNum, -1);
+    copyAllOAM();
+    shown = TRUE;
+}
+
 int countBits(u8 mask)
 {
     int n = 0;
@@ -3601,6 +3661,7 @@ u8 waitForPlayers(void)
     int shownMask = -1;
     int shownMaster = -1;
     int multibootWaitingTime = 0;
+    int probeTime = 0;
     bool startReleased = FALSE;
     for( ; ; )
     {
@@ -3629,6 +3690,9 @@ u8 waitForPlayers(void)
             shownMask = waiting;
         }
         
+        // hold L to see what's on the cable
+        showLinkDiagnostics( KEY_DOWN( KEYL ) );
+        
         if(!master)
         {
             playing = linkGameStarted();
@@ -3656,18 +3720,27 @@ u8 waitForPlayers(void)
             shownMask = -1;
         }
         
-        // send the game to any Gameboys waiting for it, once sure they're there
+        // send the game to any Gameboys waiting for it (with the BIOS logo showing): as soon as
+        // a slot's looked like one for a moment, and every couple of seconds ask anyway, in case
+        // a BIOS doesn't show itself until it's asked
+        bool trySend = FALSE;
         if( linkMultibootWaiting() )
-            multibootWaitingTime++;
+        {
+            if( ++multibootWaitingTime > 30 )
+                trySend = TRUE;
+        }
         else
             multibootWaitingTime = 0;
+        if( ++probeTime >= 120 )
+            trySend = TRUE;
         
-        if( multibootWaitingTime > 30 )
+        if( trySend )
         {
-            waitingMessage("SENDING THE GAME TO", "THE OTHER GAMEBOYS...", "");
+            probeTime = 0;
+            multibootWaitingTime = 0;
             
             linkStop();
-            int result = multibootSend(bPressed);
+            int result = multibootSend(bPressed, showSending);
             if( MULTIBOOT_CANCELLED == result )
                 break;
             if( MULTIBOOT_FAILED == result )
@@ -3677,8 +3750,8 @@ u8 waitForPlayers(void)
             }
             
             linkStart();
-            multibootWaitingTime = 0;
-            shownMask = -1;
+            if( MULTIBOOT_NOBODY != result )
+                shownMask = -1;
         }
     }
     

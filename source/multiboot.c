@@ -24,7 +24,6 @@
 #define CLIENT_NO_DATA          0xFF
 #define DETECTION_TRIES         16
 #define WAIT_BEFORE_TRANSFER    50          // scanlines
-#define WAIT_BEFORE_RETRY       ((160 + 68) * 60)
 
 #define HANDSHAKE               0x6200
 #define HANDSHAKE_RESPONSE      0x7200
@@ -41,6 +40,10 @@
 #define STEP_RETRY              1
 #define STEP_CANCELLED          2
 #define STEP_ERROR              3
+#define STEP_NOBODY             4       // no Gameboy waiting to be sent the game
+
+// how long to wait for a transfer before giving up on it, in scanlines (about 4 frames)
+#define TRANSFER_TIMEOUT        (228 * 4)
 
 extern u8 __boot_method;     // in the cartridge header, set by the BIOS when multibooted
 extern u8 __ewram_overlay_lma[];  // end of the image (the EWRAM overlays aren't used),
@@ -83,7 +86,30 @@ static void generalPurposeMode(void)
     REG_RCNT = R_GPIO;
 }
 
-// one transfer, the clients' replies end up in responses[]
+// wait for a transfer to finish, FALSE if cancelled or it never does
+static bool waitWhileBusy(void)
+{
+    u32 lines = 0;
+    u16 vcount = REG_VCOUNT;
+    while( REG_SIOCNT & SIO_START )
+    {
+        if( cancelled() )
+            return FALSE;
+        if( REG_VCOUNT != vcount )
+        {
+            vcount = REG_VCOUNT;
+            if( ++lines > TRANSFER_TIMEOUT )
+            {
+                // never finished (not every Gameboy on the cable ready?), start afresh
+                multiplayerMode();
+                return FALSE;
+            }
+        }
+    }
+    return TRUE;
+}
+
+// one transfer, the clients' replies end up in responses[] (0xFFFF if none)
 static void exchange(u16 data)
 {
     int i;
@@ -92,16 +118,14 @@ static void exchange(u16 data)
 
     waitScanlines(WAIT_BEFORE_TRANSFER);
 
-    while( REG_SIOCNT & SIO_START )
-        if( cancelled() )
-            return;
+    if( !waitWhileBusy() )
+        return;
 
     REG_SIOMLT_SEND = data;
     REG_SIOCNT |= SIO_START;
 
-    while( REG_SIOCNT & SIO_START )
-        if( cancelled() )
-            return;
+    if( !waitWhileBusy() )
+        return;
 
     for(i=0; i<NUM_CLIENTS; i++)
         responses[i] = (&REG_SIOMULTI1)[i];
@@ -147,12 +171,10 @@ static int detectClients(MultiBootParam* mp)
         }
     }
 
+    // no one there: say so rather than keep trying, so this can be used to look for Gameboys
+    // waiting to be sent the game without holding things up
     if( !mp->client_bit )
-    {
-        generalPurposeMode();
-        waitScanlines(WAIT_BEFORE_RETRY);
-        return STEP_RETRY;
-    }
+        return STEP_NOBODY;
 
     return STEP_DONE;
 }
@@ -202,16 +224,24 @@ static int confirmHandshakeData(MultiBootParam* mp)
     return STEP_DONE;
 }
 
-// repeat a step while it asks to be retried, then FALSE if it didn't work out
+// most times to retry a step (each try is a transfer or more, a few milliseconds)
+#define MAX_TRIES   600
+
+// repeat a step while it asks to be retried (but not for ever, a Gameboy might have gone),
+// and give up on the send if it didn't work out
 #define TRY(STEP) \
-    do { result = (STEP); } while( STEP_RETRY == result ); \
+    tries = 0; \
+    do { result = (STEP); } while( STEP_RETRY == result && ++tries < MAX_TRIES ); \
+    if( STEP_RETRY == result ) \
+        result = STEP_ERROR; \
     if( STEP_DONE != result ) \
         goto finished;
 
-int multibootSend(bool (*cancel)(void))
+int multibootSend(bool (*cancel)(void), void (*found)(void))
 {
     MultiBootParam mp;
     int result;
+    int tries;
 
     cancelled = cancel;
 
@@ -225,6 +255,8 @@ int multibootSend(bool (*cancel)(void))
     mp.boot_endp = (u8*)EWRAM + ((((u32)__ewram_overlay_lma - EWRAM) + 15) & ~15);
 
     TRY( detectClients(&mp) )
+    if( found )
+        found();
     TRY( compare(&mp, CONFIRM_CLIENTS | mp.client_bit, HANDSHAKE_RESPONSE) )
     TRY( sendHeader() )
     TRY( compare(&mp, HANDSHAKE, 0) )
@@ -253,6 +285,7 @@ finished:
     {
         case STEP_DONE      : return MULTIBOOT_SENT;
         case STEP_CANCELLED : return MULTIBOOT_CANCELLED;
+        case STEP_NOBODY    : return MULTIBOOT_NOBODY;
         default             : return MULTIBOOT_FAILED;
     }
 }

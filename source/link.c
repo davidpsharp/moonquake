@@ -221,6 +221,16 @@ u8 linkWaitingMask(void)
     return mask;
 }
 
+u16 linkSlotWord(int slot)
+{
+    return receivedWord[slot];
+}
+
+bool linkAllReady(void)
+{
+    return (REG_SIOCNT & SIO_ALL_READY) != 0;
+}
+
 bool linkMultibootWaiting(void)
 {
     int i;
