@@ -239,7 +239,7 @@ u16 robotsHaltCount;        // univeral time when robots started being frozen
 
 struct RobotData
 {
-    bool dead;
+    u8 dead;            // ALIVE, DYING or DEAD (was a bool, which can only hold 0 or 1, so DEAD became DYING)
     u16 x;
     u16 y;
     u8 direction;
