@@ -7,6 +7,7 @@
 //
 // See tools/linktest/run.sh for usage.
 
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
 #include <mgba/core/lockstep.h>
@@ -75,6 +76,10 @@ struct Gba {
 	int unplugAt;           // pull the cable out at this frame, 0 for never
 	volatile int unplugRequested;
 	int unplugged;
+	int botAlways;          // random play outside linked games too (after the menus)
+	int ghosts;             // report dead robots whose sprites are on screen
+	FILE* audio;            // sound output, 16 bit stereo
+	long audioSamples;
 	int resetAt;            // video frame to reset this Gameboy at (as if switched off), 0 for never
 
 	int frames;
@@ -127,7 +132,7 @@ static volatile int stop;
 static int dumpGba = -1, dumpFrame;
 static uint32_t dumpAddr, dumpLen;
 static const char* dumpFile;
-static uint32_t symPlayer;
+static uint32_t symPlayer, symRobot;
 #define PLAYER_SIZE 48          // sizeof(struct Player) in the game
 #define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
 #define LIFE_OUT 3
@@ -401,7 +406,35 @@ static void frameCallback(struct mCoreThread* thread) {
 			keys |= g->script[i].keys;
 		}
 	}
-	if (inGame && !matchOver) {
+	if (g->ghosts && symRobot) {
+		// a dead robot's sprite shouldn't be on screen (OAM entries 100 on are the robots)
+		for (int i = 0; i < 10; ++i) {
+			int dead = core->busRead8(core, symRobot + i * 10);
+			uint16_t a0 = core->busRead16(core, 0x07000000 + (100 + i) * 8);
+			uint16_t a1 = core->busRead16(core, 0x07000000 + (100 + i) * 8 + 2);
+			uint16_t a2 = core->busRead16(core, 0x07000000 + (100 + i) * 8 + 4);
+			int x = a1 & 511, y = a0 & 255;
+			int visible = (x < 240 || x > 512 - 16) && (y < 160 || y > 256 - 16);
+			if (dead == 2 && visible) {
+				printf("gba%d frame %d: dead robot %d's sprite on screen at %d,%d, char %d\n", g->id, frame, i, x, y, a2 & 1023);
+			}
+		}
+	}
+	if (g->audio) {
+		short buf[2048 * 2];
+		struct blip_t* left = core->getAudioChannel(core, 0);
+		struct blip_t* right = core->getAudioChannel(core, 1);
+		int n = blip_samples_avail(left);
+		if (n > 2048) {
+			n = 2048;
+		}
+		blip_read_samples(left, buf, n, 1);
+		blip_read_samples(right, buf + 1, n, 1);
+		fwrite(buf, 4, n, g->audio);
+		g->audioSamples += n;
+	}
+
+	if ((inGame || (g->botAlways && frame > 700)) && !matchOver) {
 		// random play: hold a direction for a while, sometimes drop a bomb
 		if (g->botHold-- <= 0) {
 			static const int dirs[] = { 0, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT };
@@ -452,6 +485,9 @@ static void usage(void) {
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
 	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
 	        "  --dump GBA:FRAME:ADDR:LEN:FILE   save memory (hex address and length) to a file\n"
+	        "  --bot GBA              random play in single player games too\n"
+	        "  --ghosts GBA           report dead robots whose sprites are on screen (needs robot)\n"
+	        "  --audio GBA:FILE       save the sound as raw 16 bit stereo\n"
 	        "  --unplug GBA:FRAME     pull a Gameboy's cable out at that frame (use the last\n"
 	        "                         Gameboys, mGBA renumbers the rest if one's taken from the middle)\n"
 	        "  --sym NAME=ADDR:SIZE   game state to compare (also needs universalTimer, frameDone,\n"
@@ -513,6 +549,19 @@ int main(int argc, char** argv) {
 				usage();
 			}
 			dumpFile = file;
+			++i;
+		} else if (!strcmp(a, "--bot") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].botAlways = 1;
+			++i;
+		} else if (!strcmp(a, "--ghosts") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].ghosts = 1;
+			++i;
+		} else if (!strcmp(a, "--audio") && v) {
+			static char file[256];
+			if (sscanf(v, "%d:%255s", &n, file) != 2 || n >= MAX_GBAS_TESTED) {
+				usage();
+			}
+			gba[n].audio = fopen(file, "wb");
 			++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
@@ -576,6 +625,7 @@ int main(int argc, char** argv) {
 	symTimer = symAddr("universalTimer");
 	symLinked = symAddr("linked");
 	symPlayer = symAddr("player");
+	symRobot = symAddr("robot");
 	symMatchOver = symAddr("matchOver");
 	if (!symFrameDone || !symTimer || !symLinked || !symMatchOver) {
 		fprintf(stderr, "need --sym for frameDone, universalTimer, linked and matchOver\n");
@@ -611,9 +661,13 @@ int main(int argc, char** argv) {
 		// a Gameboy with no cartridge has to run its BIOS to wait for multiboot
 		mCoreConfigSetValue(&g->core->config, "skipBios", noCart ? "0" : "1");
 		mCoreLoadConfig(g->core);
+		// full volume, as the frontends set by default (with no config it's 0)
+		g->core->opts.volume = 0x100;
+		((struct GBA*) g->core->board)->audio.masterVolume = 0x100;
 
 		g->video = calloc(GBA_VIDEO_HORIZONTAL_PIXELS * GBA_VIDEO_VERTICAL_PIXELS, sizeof(color_t));
 		g->core->setVideoBuffer(g->core, g->video, GBA_VIDEO_HORIZONTAL_PIXELS);
+		g->core->setAudioBufferSize(g->core, 4096);
 
 		if (bios) {
 			struct VFile* vf = VFileOpen(bios, O_RDONLY);
