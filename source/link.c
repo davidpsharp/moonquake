@@ -144,9 +144,10 @@ bool linkIsMaster(void)
 
 void linkBeginGame(void)
 {
+    // (keep sending WORD_WAITING until linkExchange(): a game word sent now would be taken as
+    // the input for the first frame)
     frame = 0;
     previousInput = 0;
-    sendWord = 0x4000;
 }
 
 // wait for the other Gameboy's input for the current frame, if finishing a game then the
