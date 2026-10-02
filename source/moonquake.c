@@ -776,6 +776,17 @@ int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
 
 
 
+// short blip of the teletype's tone, for moving between menu entries
+void menuBlip()
+{
+    // as writeText() but using the sound's length counter (64-56)/256s, about 30ms, so it
+    // stops by itself
+    REG_SOUNDCNT_L=0x1177;
+    REG_SOUND1CNT_L=0x0000;
+    REG_SOUND1CNT_H=0x30C0 | 56;
+    REG_SOUND1CNT_X=0xC790;
+}
+
 // simple fade of the 256 colour palette to black (i.e. doesn't fade proportional to brightness, which would need LUT)
 void fadeToBlack()
 {
@@ -3583,7 +3594,7 @@ int main(void)
                 if(dirKeyPressed)
                 {
 
-                    mmEffectEx(&explo);
+                    menuBlip();
                     
                     buttonReleased = 0;
                     
