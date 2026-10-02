@@ -1,9 +1,9 @@
-// Two player link cable support for Moonquake, see link.h
+// Link cable support for Moonquake's 2-4 player game, see link.h
 //
-// Uses the GBA's multiplayer serial mode. The master (player 1) starts a transfer roughly
-// every millisecond from a timer interrupt, each transfer swaps one 16 bit word between the
-// two Gameboys. Each Gameboy just keeps sending its current word and remembers the last
-// word it received, so a transfer that's missed or repeated doesn't matter.
+// Uses the GBA's multiplayer serial mode. The master starts a transfer roughly every
+// millisecond from a timer interrupt, each transfer sends one 16 bit word from every Gameboy
+// to all the others. Each Gameboy just keeps sending its current word and remembers the
+// last word received from each slot, so a transfer that's missed or repeated doesn't matter.
 //
 // During a game the word sent is
 //
@@ -13,9 +13,13 @@
 //   bits 6-11  input for that frame
 //   bits 0-5   input for the frame before
 //
-// A Gameboy can't start frame n+1 until it has the other's input for frame n, so the two are
-// never more than one frame apart. If the other Gameboy has already moved on to frame n+1
+// A Gameboy can't start frame n+1 until it has every other player's input for frame n, so
+// no two are ever more than one frame apart. If another has already moved on to frame n+1
 // its word still carries its input for frame n in the low bits.
+//
+// Before a game the master sends WORD_START with the slots playing, each of those replies
+// WORD_JOINED, and once they all have the game starts. (Not a game word: that would be taken
+// as the input for the first frame.)
 
 #include <gba_base.h>
 #include <gba_interrupt.h>
@@ -28,32 +32,40 @@
 #define TRUE 1
 #define FALSE 0
 
-#define SIO_SI_HIGH         (1 << 2)    // set on the slave, clear on the master
+#define SIO_SI_HIGH         (1 << 2)    // set on the slaves, clear on the master
 #define SIO_ALL_READY       (1 << 3)
+#define SIO_ID_SHIFT        4
 #define SIO_MULTI_ERROR     (1 << 6)
 #define SIO_MULTI_BUSY      (1 << 7)
 
 #define WORD_NONE           0xFFFF      // what's received from a Gameboy that isn't there
-#define WORD_WAITING        0x8001      // in two player mode, waiting to start a game
+#define WORD_WAITING        0x8001      // waiting to start a game
+#define WORD_START          0x9000      // master starting a game, low 4 bits are the slots playing
+#define WORD_JOINED         0x8002      // joined the game the master's starting
 #define WORD_BIOS_WAITING   0x0000      // what the BIOS sends while waiting to be multibooted
+#define WORD_IS_START(w)    (((w) & 0xFFF0) == WORD_START)
 #define WORD_IS_GAME(w)     (((w) & 0xC000) == 0x4000)
 #define WORD_FRAME(w)       (((w) >> 12) & 3)
 #define WORD_INPUT(w)       (((w) >> 6) & 63)
 #define WORD_PREV_INPUT(w)  ((w) & 63)
 
 // timer 3 ticks every 1024 cycles (61us), 16 ticks is about 1ms between transfers
+// (with four Gameboys a transfer takes longer than that, the timer just skips a go)
 #define TRANSFER_INTERVAL   16
 
-// how long without hearing from the other Gameboy before giving up, in vblanks
-#define NO_TRANSFERS_TIMEOUT    60      // cable pulled out or other Gameboy switched off
-#define NO_PROGRESS_TIMEOUT     (60*10) // other Gameboy stopped playing
+// how long without hearing from another Gameboy before giving up, in vblanks
+#define NO_TRANSFERS_TIMEOUT    60      // cable pulled out or a Gameboy switched off
+#define NO_PROGRESS_TIMEOUT     (60*10) // a Gameboy stopped playing
 
 static volatile u16 sendWord = WORD_WAITING;
-static volatile u16 receivedWord = WORD_NONE;
+static volatile u16 receivedWord[LINK_MAX_PLAYERS];
+static volatile u8 slot;
+static volatile u8 masterRepeats;       // transfers in a row the master's word hasn't changed
 static volatile u32 transfers;          // count of good transfers, to spot the cable being pulled
 static volatile u32 vblanks;
 static bool linkActive;
 
+static u8 playing;                      // slots in the game
 static u8 frame;                        // frame number modulo 4
 static u8 previousInput;
 
@@ -69,16 +81,33 @@ void linkOnSerial(void)
     if( cnt & SIO_MULTI_ERROR )
         return;
 
-    // master's word arrives in slot 0, slave's in slot 1
-    u16 word = (&REG_SIOMULTI0)[ (cnt & SIO_SI_HIGH) ? 0 : 1 ];
-    receivedWord = word;
-    if( word != WORD_NONE )
-        transfers++;
+    int i;
+    u16 masterWord = REG_SIOMULTI0;
+    if( masterWord == receivedWord[0] )
+    {
+        if( masterRepeats < 255 )
+            masterRepeats++;
+    }
+    else
+        masterRepeats = 0;
+    for(i=0; i<LINK_MAX_PLAYERS; i++)
+        receivedWord[i] = (&REG_SIOMULTI0)[i];
+    slot = (cnt >> SIO_ID_SHIFT) & 3;
+    transfers++;
 
-    // the slave's word must be in place before the master starts the next transfer,
+    // a slave's word must be in place before the master starts the next transfer,
     // it's done here as there's a guaranteed gap after each transfer
     if( cnt & SIO_SI_HIGH )
-        REG_SIOMLT_SEND = sendWord;
+    {
+        u16 word = sendWord;
+        // If waiting while the master's doing something else, it's sending the game to other
+        // Gameboys by multiboot. Look like an empty slot until it's done, else the BIOS
+        // waits for this Gameboy to answer too. (Can't just leave multiplayer mode, that
+        // would cut off any Gameboys further along the cable.)
+        if( word == WORD_WAITING && masterWord != WORD_WAITING && !WORD_IS_START(masterWord) )
+            word = WORD_NONE;
+        REG_SIOMLT_SEND = word;
+    }
 }
 
 void linkOnTimer(void)
@@ -98,8 +127,11 @@ void linkOnVBlank(void)
 
 void linkStart(void)
 {
+    int i;
+    for(i=0; i<LINK_MAX_PLAYERS; i++)
+        receivedWord[i] = WORD_NONE;
     sendWord = WORD_WAITING;
-    receivedWord = WORD_NONE;
+    playing = 0;
 
     REG_RCNT = R_MULTI;
     REG_SIOMLT_SEND = sendWord;     // before multiplayer mode so 0 is never sent, see WORD_BIOS_WAITING
@@ -125,16 +157,9 @@ void linkStop(void)
     linkActive = FALSE;
 }
 
-int linkPeerState(void)
+int linkSlot(void)
 {
-    u16 word = receivedWord;
-    if( word == WORD_WAITING )
-        return LINK_PEER_WAITING;
-    if( WORD_IS_GAME(word) )
-        return LINK_PEER_PLAYING;
-    if( word == WORD_BIOS_WAITING )
-        return LINK_PEER_MULTIBOOT;
-    return LINK_PEER_NONE;
+    return isMaster() ? 0 : slot;
 }
 
 bool linkIsMaster(void)
@@ -142,34 +167,103 @@ bool linkIsMaster(void)
     return isMaster();
 }
 
-void linkBeginGame(void)
+u8 linkWaitingMask(void)
 {
-    frame = 0;
-    previousInput = 0;
-    sendWord = 0x4000;
+    u8 mask = 1 << linkSlot();
+    int i;
+    for(i=0; i<LINK_MAX_PLAYERS; i++)
+        if( receivedWord[i] == WORD_WAITING )
+            mask |= 1 << i;
+    return mask;
 }
 
-// wait for the other Gameboy's input for the current frame, if finishing a game then the
-// other Gameboy having already gone back to waiting counts too
-static int waitForFrame(bool finishing)
+bool linkMultibootWaiting(void)
+{
+    int i;
+    for(i=1; i<LINK_MAX_PLAYERS; i++)
+        if( receivedWord[i] == WORD_BIOS_WAITING )
+            return TRUE;
+    return FALSE;
+}
+
+static void beginGame(u8 mask)
+{
+    playing = mask;
+    frame = 0;
+    previousInput = 0;
+}
+
+bool linkStartGame(u8 mask)
+{
+    sendWord = WORD_START | mask;
+
+    // wait for all the others to join (or, quick off the mark, already be sending game words)
+    u32 startTime = vblanks;
+    for( ; ; )
+    {
+        bool allStarted = TRUE;
+        int i;
+        for(i=1; i<LINK_MAX_PLAYERS; i++)
+            if( (mask & (1 << i)) && receivedWord[i] != WORD_JOINED && !WORD_IS_GAME(receivedWord[i]) )
+                allStarted = FALSE;
+
+        if( allStarted )
+            break;
+        if( vblanks - startTime > NO_TRANSFERS_TIMEOUT )
+        {
+            sendWord = WORD_WAITING;
+            return FALSE;
+        }
+        Halt();
+    }
+
+    beginGame(mask);
+    return TRUE;
+}
+
+u8 linkGameStarted(void)
+{
+    // while the master's sending the game by multiboot anything could go past, so make sure
+    // it's really saying start
+    u16 word = receivedWord[0];
+    if( WORD_IS_START(word) && (word & (1 << linkSlot())) && masterRepeats >= 16 )
+    {
+        sendWord = WORD_JOINED;
+        beginGame(word & 15);
+        return playing;
+    }
+    return 0;
+}
+
+// wait for every other player's input for the current frame, if finishing a game then
+// a Gameboy having already gone back to waiting counts too
+static int waitForFrame(bool finishing, u8* inputs)
 {
     u32 lastTransfers = transfers;
     u32 lastTransferTime = vblanks;
     u32 startTime = vblanks;
+    u8 me = linkSlot();
 
     for( ; ; )
     {
-        u16 word = receivedWord;
-
-        if( WORD_IS_GAME(word) )
+        bool haveAll = TRUE;
+        int i;
+        for(i=0; i<LINK_MAX_PLAYERS; i++)
         {
-            if( WORD_FRAME(word) == frame )
-                return WORD_INPUT(word);
-            if( WORD_FRAME(word) == ((frame + 1) & 3) )
-                return WORD_PREV_INPUT(word);
-            // else still on the frame before, wait
+            if( i == me || !(playing & (1 << i)) )
+                continue;
+
+            u16 word = receivedWord[i];
+            if( WORD_IS_GAME(word) && WORD_FRAME(word) == frame )
+                inputs[i] = WORD_INPUT(word);
+            else if( WORD_IS_GAME(word) && WORD_FRAME(word) == ((frame + 1) & 3) )
+                inputs[i] = WORD_PREV_INPUT(word);
+            else if( finishing && word == WORD_WAITING )
+                inputs[i] = 0;
+            else
+                haveAll = FALSE;    // still on the frame before (or the master's still starting)
         }
-        else if( finishing && word == WORD_WAITING )
+        if( haveAll )
             return 0;
 
         if( transfers != lastTransfers )
@@ -185,28 +279,40 @@ static int waitForFrame(bool finishing)
     }
 }
 
-int linkExchange(u8 input)
+int linkExchange(u8 input, u8* inputs)
 {
     sendWord = 0x4000 | (frame << 12) | (input << 6) | previousInput;
 
-    int otherInput = waitForFrame(FALSE);
+    int result = waitForFrame(FALSE, inputs);
+    inputs[linkSlot()] = input;
 
     previousInput = input;
     frame = (frame + 1) & 3;
-    return otherInput;
+    return result;
 }
 
 void linkEndGame(void)
 {
-    // Both Gameboys call this at the same frame. Go through one more frame, then once this
-    // Gameboy has the other's word for that frame the other must have had everything it
-    // needs from us, and if it's already finished it'll be sending WORD_WAITING.
+    // All the Gameboys call this at the same frame. Go through one more frame, then once this
+    // Gameboy has the others' words for that frame they must have had everything they need
+    // from us, and any already finished will be sending WORD_WAITING.
+    u8 inputs[LINK_MAX_PLAYERS];
     sendWord = 0x4000 | (frame << 12) | previousInput;
-    waitForFrame(TRUE);
+    waitForFrame(TRUE, inputs);
     sendWord = WORD_WAITING;
 
-    // and give the other a moment to see that before anything stops the link
+    // and give the others a moment to see that before anything stops the link
     u32 startTime = vblanks;
-    while( WORD_IS_GAME(receivedWord) && vblanks - startTime < NO_TRANSFERS_TIMEOUT )
+    for( ; ; )
+    {
+        bool anyPlaying = FALSE;
+        int i;
+        for(i=0; i<LINK_MAX_PLAYERS; i++)
+            if( i != linkSlot() && (playing & (1 << i)) && WORD_IS_GAME(receivedWord[i]) )
+                anyPlaying = TRUE;
+        if( !anyPlaying || vblanks - startTime > NO_TRANSFERS_TIMEOUT )
+            break;
         Halt();
+    }
+    playing = 0;
 }

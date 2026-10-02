@@ -30,14 +30,21 @@ fi
 
 # game state compared between the two Gameboys, plus the symbols linktest needs
 syms=""
-for name in universalTimer frameDone numPlayers matchOver area bombVal bombOwner player \
+for name in universalTimer frameDone linked matchOver area bombVal bombOwner player \
         robot rubbleCount gameRandSeed robotMoveSeed mysteryTokenSeed robotsHalt nuked level $EXTRA_SYMS; do
     line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk -v n="$name" '$4 == n { print $1 ":" $2 }')
     [ -n "$line" ] || { echo "no symbol $name in $ELF" >&2; exit 2; }
     syms="$syms --sym $name=$line"
 done
 
-# skip the credits, then on each Gameboy: up (to 2 PLAYER LINK, the last option), A
-script="--keys 0:200:1:4 --keys 1:200:1:4 --keys 0:420:64:4 --keys 1:430:64:4 --keys 0:460:1:4 --keys 1:500:1:4"
+# link state GBA 0 looks at to start the game once everyone's in the lobby
+line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk '$4 == "receivedWord" { print $1 ":" $2 }')
+syms="$syms --info receivedWord=$line"
+
+# skip the credits, then on each Gameboy: up (to 2-4 PLAYER LINK, the last option), A
+script=""
+for g in 0 1 2 3; do
+    script="$script --keys $g:200:1:4 --keys $g:$((420 + g * 10)):64:4 --keys $g:$((460 + g * 20)):1:4"
+done
 
 exec "$here/linktest" $syms $script "$@" "$ROM"

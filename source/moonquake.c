@@ -192,6 +192,10 @@ extern const unsigned short credits_Palette[256];
 #define OAM_GHALO               OAM_ROBOTS+MAX_ROBOTS + 1
 #define OAM_RMAN                OAM_ROBOTS+MAX_ROBOTS + 2
 #define OAM_RHALO               OAM_ROBOTS+MAX_ROBOTS + 3
+#define OAM_OMAN                OAM_ROBOTS+MAX_ROBOTS + 4
+#define OAM_OHALO               OAM_ROBOTS+MAX_ROBOTS + 5
+#define OAM_PMAN                OAM_ROBOTS+MAX_ROBOTS + 6
+#define OAM_PHALO               OAM_ROBOTS+MAX_ROBOTS + 7
 #define OAM_TELETYPE            127
 
 // define movement direction values for robots (and possibly later the man too???)
@@ -204,6 +208,7 @@ extern const unsigned short credits_Palette[256];
 #define ALIVE 0
 #define DYING 1
 #define DEAD 2
+#define OUT 3       // out of lives in a linked game
 
 #define AREA_X 19    // width in tiles of playing area
 #define AREA_Y 13   // height in tiles
@@ -287,12 +292,30 @@ struct Player
     u16 autoPlantTimer;     // univeral time when man started auto dropping bombs
     int lives;
     u8 input;               // controller input this frame, IN_ bits from link.h
+    bool inGame;
+    const u16* recoloured;  // for colours with no sprites of their own, frames made at startup
+    u16 streamChar;         // and the sprite character the current frame is copied to
+    const u16* streamFrame; // frame to copy there at the next vblank
 };
 
-#define MAX_PLAYERS 2
+// green (player 1, and the single player game), red, orange and pink
+#define MAX_PLAYERS LINK_MAX_PLAYERS
 struct Player player[MAX_PLAYERS];
-int numPlayers = 1;         // 2 in a linked game
+bool linked;                // TRUE in a linked game
 int localPlayer;            // which player this Gameboy controls, the screen follows him
+
+const char* const playerName[MAX_PLAYERS] = { "GREEN", "RED", "ORANGE", "PINK" };
+
+// sprite palette with the extra colours added (see buildPlayerColours)
+u16 spritePalette[256];
+
+// orange and pink men, made from the green man's 20 frames (4 directions x 5) at startup
+#define MAN_FRAMES 20
+#define FRAME_U16S (16*16/2)
+EWRAM_BSS u16 recolouredMen[2][MAN_FRAMES * FRAME_U16S];
+
+// sprite characters after the ones loaded from sprites_Bitmap, used for the orange and pink men
+#define STREAM_CHAR (26112/32)
 
 u16 xOffset;    // screen offsets to be fed to hardware regs
 u16 yOffset;
@@ -913,7 +936,7 @@ void fadePaletteIn()
             }
             else
             {
-                fadeInColoursOneStep(OBJPaletteMem, sprites_Palette, NUM_COLOURS_USED_IN_SPRITE_PALETTE);
+                fadeInColoursOneStep(OBJPaletteMem, spritePalette, NUM_COLOURS_USED_IN_SPRITE_PALETTE);
             }
             
         }
@@ -1089,18 +1112,33 @@ bool readInputs(void)
     u8 input = readLocalInput();
     player[localPlayer].input = input;
     
-    if( numPlayers > 1 )
+    if( linked )
     {
-        int otherInput = linkExchange(input);
-        if( LINK_LOST == otherInput )
+        u8 inputs[MAX_PLAYERS];
+        if( LINK_LOST == linkExchange(input, inputs) )
         {
             linkLost = TRUE;
             return FALSE;
         }
-        player[1 - localPlayer].input = otherInput;
+        
+        int i;
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame)
+                player[i].input = inputs[i];
     }
     
     return TRUE;
+}
+
+// all the players' inputs this frame combined
+u8 allInputs(void)
+{
+    u8 input = 0;
+    int i;
+    for(i=0; i<MAX_PLAYERS; i++)
+        if(player[i].inGame)
+            input |= player[i].input;
+    return input;
 }
 
 // handle when player has pressed pause button
@@ -1174,11 +1212,11 @@ void pauseActivated()
     {
         bool startHeld;
         
-        if( numPlayers > 1 )
+        if( linked )
         {
             if( !readInputs() )
                 break;
-            startHeld = ( (player[0].input | player[1].input) & IN_START ) != 0;
+            startHeld = ( allInputs() & IN_START ) != 0;
         }
         else
         {
@@ -1209,7 +1247,7 @@ void pauseActivated()
         *thisPal++ = *sourcePal++;
     }
     thisPal = OBJPaletteMem;
-    sourcePal = sprites_Palette;
+    sourcePal = spritePalette;
     for(i=0; i<NUM_COLOURS_USED_IN_SPRITE_PALETTE; i++)
     {
         *thisPal++ = *sourcePal++;
@@ -1365,14 +1403,23 @@ void drawBoardSprite(u16 spriteNumber, u16 charNumber, s16 x, s16 y)
 void drawPlayers(void)
 {
     int i;
-    for(i=0; i<numPlayers; i++)
+    for(i=0; i<MAX_PLAYERS; i++)
     {
         struct Player* p = &player[i];
+        if(!p->inGame)
+            continue;
         
         switch(p->lifeStatus)
         {
             case ALIVE :
-                drawBoardSprite(p->oamMan, p->sprite + p->colour + (p->frame * 8), p->x, p->y);
+                if(p->recoloured)
+                {
+                    // copied into place at the next vblank by copyStreamedSprites()
+                    p->streamFrame = p->recoloured + (p->sprite / 8 + p->frame) * FRAME_U16S;
+                    drawBoardSprite(p->oamMan, p->streamChar, p->x, p->y);
+                }
+                else
+                    drawBoardSprite(p->oamMan, p->sprite + p->colour + (p->frame * 8), p->x, p->y);
                 if(p->halo)
                     drawBoardSprite(p->oamHalo, S_HALO, p->x, p->y);
                 else
@@ -1388,6 +1435,69 @@ void drawPlayers(void)
                 turnOffSprite(p->oamMan);
                 turnOffSprite(p->oamHalo);
                 break;
+        }
+    }
+}
+
+// copy the current frames of men without sprites of their own into sprite memory, call in vblank
+void copyStreamedSprites(void)
+{
+    int i;
+    for(i=0; i<MAX_PLAYERS; i++)
+    {
+        struct Player* p = &player[i];
+        if(p->inGame && p->streamFrame)
+        {
+            const u16* src = p->streamFrame;
+            volatile u16* dest = OAMdata + p->streamChar * 16;
+            int n;
+            for(n=0; n<FRAME_U16S; n++)
+                *dest++ = *src++;
+            p->streamFrame = NULL;
+        }
+    }
+}
+
+// set up the extra colours of men: add orange and pink ramps to the sprite palette, in place
+// of the green ramps the green man uses, and make orange and pink copies of his frames
+// (call with the sprites loaded)
+void buildPlayerColours(void)
+{
+    // green man's colours, and the unused palette entries for the orange and pink versions
+    static const u8 greenEntries[8] = { 64, 65, 66, 67, 96, 97, 98, 99 };
+    static const u8 newEntries[2][8] = { { 1, 2, 3, 4, 5, 6, 7, 8 }, { 9, 10, 11, 12, 13, 14, 15, 24 } };
+    // how much of the green ramp's brightness goes into red, green and blue (out of 32)
+    static const u8 tint[2][3] = { { 32, 21, 6 }, { 32, 18, 26 } };
+    
+    int i, c, n;
+    for(i=0; i<256; i++)
+        spritePalette[i] = sprites_Palette[i];
+    
+    for(c=0; c<2; c++)
+    {
+        for(i=0; i<8; i++)
+        {
+            u16 green = sprites_Palette[ greenEntries[i] ];
+            int main = (green >> 5) & 31;     // the green ramps are bright green with a little grey
+            int minor = green & 31;
+            int r = minor + ((main - minor) * tint[c][0]) / 32;
+            int g = minor + ((main - minor) * tint[c][1]) / 32;
+            int b = minor + ((main - minor) * tint[c][2]) / 32;
+            spritePalette[ newEntries[c][i] ] = r | (g << 5) | (b << 10);
+        }
+        
+        // the green man's frames are the first 20 sprites
+        for(n=0; n<MAN_FRAMES * FRAME_U16S; n++)
+        {
+            u16 pixels = OAMdata[n];
+            u8 lo = pixels & 255;
+            u8 hi = pixels >> 8;
+            for(i=0; i<8; i++)
+            {
+                if(lo == greenEntries[i]) lo = newEntries[c][i];
+                if(hi == greenEntries[i]) hi = newEntries[c][i];
+            }
+            recolouredMen[c][n] = lo | (hi << 8);
         }
     }
 }
@@ -1957,6 +2067,8 @@ void generateLevel(void)
             
             if( (x+y) > 1 &&
                 (x+y) < ((AREA_X + AREA_Y) - 3) &&
+                !(player[2].inGame && (AREA_X-1-x) + y <= 1) &&
+                !(player[3].inGame && x + (AREA_Y-1-y) <= 1) &&
                 (gameRand() % 16) < 10 )
             {
                 drawObject(x,y,T_RUBBLE);
@@ -2048,7 +2160,9 @@ void generateLevel(void)
         
         // ??? work out what's happening with this AREA_X+AREA_Y - 9 to get 23 with diff size play areas
         
-        if( (x+y) > 5 && (x+y) < (AREA_X + AREA_Y) - 9 && x > 0 )
+        if( (x+y) > 5 && (x+y) < (AREA_X + AREA_Y) - 9 && x > 0 &&
+            !(player[2].inGame && (AREA_X-1-x) + y <= 5) &&
+            !(player[3].inGame && x + (AREA_Y-1-y) <= 5) )
         {
 
             if( T_RUBBLE == area[x][y] )
@@ -2108,10 +2222,11 @@ void initialiseLevel(void)
     robotsHalt = FALSE;
     robotsHaltCount = 0;
     
-    // place man in bottom right, and the second player top left
+    // place man in bottom right, and in a linked game the others in the other corners
     initialisePlayer(&player[0], AREA_X-1, AREA_Y-1, S_G_MAN_LEFT);
-    if( numPlayers > 1 )
-        initialisePlayer(&player[1], 0, 0, S_G_MAN_RIGHT);
+    initialisePlayer(&player[1], 0, 0, S_G_MAN_RIGHT);
+    initialisePlayer(&player[2], AREA_X-1, 0, S_G_MAN_LEFT);
+    initialisePlayer(&player[3], 0, AREA_Y-1, S_G_MAN_RIGHT);
     
     updateBackgroundOffset();
     
@@ -2127,7 +2242,7 @@ void initialiseLevel(void)
     LZ77UnCompVram(background_lz, tiles);
     
     // load sprite palette
-    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
 
     // load sprite tile data
     LZ77UnCompVram(sprites_lz, (void*)OAMdata);
@@ -2185,7 +2300,7 @@ bool shouldGameContinue(void)
         
     // load sprite palette
     int i;
-    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];    
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];    
     
     u32 spriteNum = OAM_LETTERS;
     writeText(-1, 40, "CONTINUE?", &spriteNum);
@@ -2285,6 +2400,7 @@ void initialiseGame(void)
     {
         player[i].lifeStatus = ALIVE;
         player[i].lives = 2;
+        player[i].streamFrame = NULL;
     }
     
     player[0].colour = 0;
@@ -2293,6 +2409,14 @@ void initialiseGame(void)
     player[1].colour = S_R_MAN_RIGHT - S_G_MAN_RIGHT;
     player[1].oamMan = OAM_RMAN;
     player[1].oamHalo = OAM_RHALO;
+    player[2].oamMan = OAM_OMAN;
+    player[2].oamHalo = OAM_OHALO;
+    player[2].recoloured = recolouredMen[0];
+    player[2].streamChar = STREAM_CHAR;
+    player[3].oamMan = OAM_PMAN;
+    player[3].oamHalo = OAM_PHALO;
+    player[3].recoloured = recolouredMen[1];
+    player[3].streamChar = STREAM_CHAR + 8;
     
     // level dependent
     // startlevel determined when selecting from main menu
@@ -2457,9 +2581,9 @@ void displayStory()
         "PRESS START TO PAUSE.",
         
         &waitKeypress, &cls,
-        "2 PLAYER GAME :",
+        "2-4 PLAYER GAME :",
         &newLine,
-        "LINK UP TWO GAMEBOYS",
+        "LINK UP TO 4 GAMEBOYS",
         "AND BLOW THE ER, LIVING",
         "DAYLIGHTS OUT OF THE",
         "OTHER PLAYER.",
@@ -2608,7 +2732,7 @@ int handleDeath(void)
             // load sprite palette
             int i;
             for(i=0; i<256; i++)
-            	OBJPaletteMem[i] = sprites_Palette[i];
+            	OBJPaletteMem[i] = spritePalette[i];
             
             u32 spriteNum = OAM_LETTERS;
             writeText(0, 0, "YOU'RE DEAD.", &spriteNum);
@@ -2661,13 +2785,11 @@ int handleDeath(void)
 bool anyPlayer(u8 lifeStatus)
 {
     int i;
-    for(i=0; i<numPlayers; i++)
-        if(player[i].lifeStatus == lifeStatus)
+    for(i=0; i<MAX_PLAYERS; i++)
+        if(player[i].inGame && player[i].lifeStatus == lifeStatus)
             return TRUE;
     return FALSE;
 }
-
-const char* const playerName[MAX_PLAYERS] = { "GREEN", "RED" };
 
 // show a banner of up to two lines over the game, wait a bit then remove it
 void showGameBanner(const char* line1, const char* line2)
@@ -2686,41 +2808,50 @@ void showGameBanner(const char* line1, const char* line2)
 // handles players dying in a linked game (called once no one is still in the middle of dying,
 // so players dying together are dealt with together)
 // returns TRUE if the game's over
-int handleTwoPlayerDeaths(void)
+int handleLinkedDeaths(void)
 {
     int i;
+    int numInGame = 0;
     int numDead = 0;
     int lastDead = 0;
-    for(i=0; i<numPlayers; i++)
+    for(i=0; i<MAX_PLAYERS; i++)
     {
-        if(player[i].lifeStatus == DEAD)
+        struct Player* p = &player[i];
+        if(!p->inGame)
+            continue;
+        numInGame++;
+        
+        if(p->lifeStatus == DEAD)
         {
-            player[i].lives--;
+            p->lives--;
             numDead++;
             lastDead = i;
+            if(p->lives < 0)
+                p->lifeStatus = OUT;
         }
     }
     
-    // game over once someone's run out of lives
-    int numOut = 0;
+    // game over once there's no more than one player left
+    int numLeft = 0;
     int winner = -1;
-    for(i=0; i<numPlayers; i++)
+    for(i=0; i<MAX_PLAYERS; i++)
     {
-        if(player[i].lives < 0)
-            numOut++;
-        else
+        if(player[i].inGame && player[i].lifeStatus != OUT)
+        {
+            numLeft++;
             winner = i;
+        }
     }
     
-    if(numOut)
+    if(numLeft <= 1)
     {
-        // both Gameboys reach here on the same frame, finish with the link now so neither is
-        // left waiting for the other while the result's displayed
+        // all the Gameboys reach here on the same frame, finish with the link now so none
+        // is left waiting for another while the result's displayed
         linkEndGame();
         matchOver = TRUE;
         
         u32 spriteNum = OAM_LETTERS;
-        if(numOut > 1)
+        if(!numLeft)
         {
             writeText(-1, 60, "IT'S A DRAW!", &spriteNum);
         }
@@ -2745,38 +2876,67 @@ int handleTwoPlayerDeaths(void)
         return TRUE;
     }
     
-    // say who died and how many lives are left
+    // say who died and how many lives everyone has left
     char line1[24];
     if(nuked)
         strcpy(line1, "REACTOR EXPLOSION");
     else if(numDead > 1)
-        strcpy(line1, "BOTH DIED");
+        strcpy(line1, numDead == numInGame ? "EVERYONE DIED" : "BOOM! MULTI-KILL");
     else
     {
         strcpy(line1, playerName[lastDead]);
-        strcat(line1, " DIED");
+        strcat(line1, player[lastDead].lifeStatus == OUT ? " IS OUT" : " DIED");
     }
-    char line2[] = "LIVES: GREEN X  RED X";
-    line2[13] = '0' + player[0].lives + 1;
-    line2[20] = '0' + player[1].lives + 1;
+    
+    char line2[32];
+    if(2 == numInGame)
+    {
+        // room to spell the colours out
+        strcpy(line2, "LIVES: ");
+        for(i=0; i<MAX_PLAYERS; i++)
+        {
+            if(player[i].inGame)
+            {
+                char lives[] = " X  ";
+                lives[1] = '0' + player[i].lives + 1;
+                strcat(line2, playerName[i]);
+                strcat(line2, lives);
+            }
+        }
+    }
+    else
+    {
+        strcpy(line2, "LIVES:");
+        for(i=0; i<MAX_PLAYERS; i++)
+        {
+            if(player[i].inGame)
+            {
+                char lives[] = " CX";
+                lives[1] = playerName[i][0];
+                lives[2] = player[i].lifeStatus == OUT ? '-' : '0' + player[i].lives + 1;
+                strcat(line2, lives);
+            }
+        }
+    }
     showGameBanner(line1, line2);
     
     if(nuked)
     {
         // the blast has cleared the level so go on to the next
         rubbleCount = 0;
-        for(i=0; i<numPlayers; i++)
-            player[i].lifeStatus = ALIVE;
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame && player[i].lifeStatus != OUT)
+                player[i].lifeStatus = ALIVE;
         return FALSE;
     }
     
     // as in a single player game, the dead come back to life where they died with a halo
     robotsHalt = FALSE;
     robotsHaltCount = 0;
-    for(i=0; i<numPlayers; i++)
+    for(i=0; i<MAX_PLAYERS; i++)
     {
         struct Player* p = &player[i];
-        if(p->lifeStatus == DEAD)
+        if(p->inGame && p->lifeStatus == DEAD)
         {
             p->autoPlantBombs = FALSE;
             p->autoPlantTimer = 0;
@@ -2877,7 +3037,7 @@ void gameLoop(void)
     for( ; ; )
     {
 
-        if(numPlayers == 1)
+        if(!linked)
         {
             // check for all rubble gone
             if( rubbleCount <= 0 )
@@ -2903,7 +3063,7 @@ void gameLoop(void)
             {
                 if( anyPlayer(DEAD) )
                 {
-                    if( handleTwoPlayerDeaths() )
+                    if( handleLinkedDeaths() )
                         return;
                 }
                 
@@ -2969,9 +3129,11 @@ void gameLoop(void)
                     robotsHalt = FALSE;
             }
             
-            for(i=0; i<numPlayers; i++)
+            for(i=0; i<MAX_PLAYERS; i++)
             {
                 struct Player* p = &player[i];
+                if(!p->inGame)
+                    continue;
                 
                 if(p->autoPlantBombs)
                     if( (u16)(universalTimer - p->autoPlantTimer) > 2000 )
@@ -2992,15 +3154,11 @@ void gameLoop(void)
         if( !readInputs() )
             return;
         
-        bool pausePressed = FALSE;
-        for(i=0; i<numPlayers; i++)
-        {
-            checkInGameKeyPresses(i);
-            if(player[i].input & IN_START)
-                pausePressed = TRUE;
-        }
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame)
+                checkInGameKeyPresses(i);
         
-        if(pausePressed)
+        if( allInputs() & IN_START )
         {
             // stays in this function until unpaused
             pauseActivated();
@@ -3009,12 +3167,14 @@ void gameLoop(void)
         }
         
         // check for gifts colliding with men
-        for(i=0; i<numPlayers; i++)
-            collectGift(&player[i]);
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame)
+                collectGift(&player[i]);
         
         // increment man movement if any and increment animation frame (test for collision with robots)
-        for(i=0; i<numPlayers; i++)
-            moveMan(&player[i]);
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame)
+                moveMan(&player[i]);
         
         updateBackgroundOffset();
         drawPlayers();
@@ -3037,6 +3197,7 @@ void gameLoop(void)
         REG_BG1VOFS = yOffset;
         // copy main game sprites positions (man, halo, monsters) to the screen
         copyGameOAM();
+        copyStreamedSprites();
         
     } // loop forever      
 }
@@ -3051,7 +3212,7 @@ void displayText()
     
     // load sprite palette
     int i;
-    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
 
     // load sprite tile data
     LZ77UnCompVram(sprites_lz, (void*)OAMdata);
@@ -3097,14 +3258,17 @@ void displayText()
 void startGameAndManageContinues()
 {
     
-    numPlayers = 1;
+    linked = FALSE;
     localPlayer = 0;
     gameRandSeed = rand();
     
     rubbleCount = 0;
     initialiseGame();
-    
     int i;
+    player[0].inGame = TRUE;
+    for(i=1; i<MAX_PLAYERS; i++)
+        player[i].inGame = FALSE;
+
     u32 spriteNum = OAM_LETTERS;
     
     do
@@ -3123,7 +3287,7 @@ void startGameAndManageContinues()
                 
                 // load sprite palette
                 for(i=0; i<256; i++)
-                	OBJPaletteMem[i] = sprites_Palette[i];
+                	OBJPaletteMem[i] = spritePalette[i];
                 
                 if( playerHasContinued )
                 {
@@ -3174,7 +3338,7 @@ void startGameAndManageContinues()
                 // display level message
                 
                 // load sprite palette
-                for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+                for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
 
                 if( level == startLevel )
                 {
@@ -3223,15 +3387,16 @@ void onVBlank() {
 }
 
 // replace the text on the waiting screen
-void waitingMessage(const char* line1, const char* line2)
+void waitingMessage(const char* line1, const char* line2, const char* line3)
 {
     turnOffAllSprites();
     
     u32 spriteNum = OAM_LETTERS;
-    writeText(-1, 30, "2 PLAYER LINK", &spriteNum);
-    writeText(-1, 60, line1, &spriteNum);
-    writeText(-1, 80, line2, &spriteNum);
-    writeText(-1, 120, "PRESS B TO CANCEL", &spriteNum);
+    writeText(-1, 20, "2-4 PLAYER LINK", &spriteNum);
+    writeText(-1, 50, line1, &spriteNum);
+    writeText(-1, 70, line2, &spriteNum);
+    writeText(-1, 90, line3, &spriteNum);
+    writeText(-1, 130, "PRESS B TO CANCEL", &spriteNum);
 }
 
 bool bPressed(void)
@@ -3239,64 +3404,109 @@ bool bPressed(void)
     return KEY_DOWN( KEYB );
 }
 
-// show the waiting screen until the other Gameboy's ready to play too, if it's waiting to be
-// sent the game by multiboot then send it
-// returns FALSE if the player gives up waiting
-bool waitForOtherPlayer(void)
+int countBits(u8 mask)
+{
+    int n = 0;
+    for( ; mask; mask >>= 1)
+        n += mask & 1;
+    return n;
+}
+
+// show the waiting screen until a game starts, returns the slots playing or 0 if the player
+// gives up waiting
+// The master (player 1) sees who's connected and starts the game, and sends the game by
+// multiboot to any Gameboys with no cartridge that are waiting for it.
+u8 waitForPlayers(void)
 {
     displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
     
     int i;
-    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
-    
-    waitingMessage("WAITING FOR THE", "OTHER PLAYER...");
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
     
     linkStart();
     
-    bool ready;
+    u8 playing = 0;
+    int shownMask = -1;
+    int shownMaster = -1;
     int multibootWaitingTime = 0;
+    bool startReleased = FALSE;
     for( ; ; )
     {
         mmFrame();
         VBlankIntrWait();
         
-        int peer = linkPeerState();
-        if( LINK_PEER_WAITING == peer || LINK_PEER_PLAYING == peer )
-        {
-            ready = TRUE;
-            break;
-        }
         if( KEY_DOWN( KEYB ) )
-        {
-            ready = FALSE;
             break;
+        
+        bool master = linkIsMaster();
+        u8 waiting = linkWaitingMask();
+        
+        // keep the screen up to date with who's there
+        if( master != shownMaster || (master && waiting != shownMask) )
+        {
+            if(master)
+            {
+                char players[] = "PLAYERS: X";
+                players[9] = '0' + countBits(waiting);
+                waitingMessage("YOU ARE GREEN", players,
+                               countBits(waiting) > 1 ? "PRESS START TO PLAY" : "WAITING FOR PLAYERS...");
+            }
+            else
+                waitingMessage("WAITING FOR GREEN", "TO START THE GAME...", "");
+            shownMaster = master;
+            shownMask = waiting;
         }
         
-        // the Gameboy with the small plug in sends the game, once sure the other's waiting for it
-        if( LINK_PEER_MULTIBOOT == peer && linkIsMaster() )
+        if(!master)
+        {
+            playing = linkGameStarted();
+            if(playing)
+                break;
+            continue;
+        }
+        
+        // master starts the game when start is pressed (once it's been let go after the menu)
+        if( !KEY_DOWN( KEYSTART ) )
+            startReleased = TRUE;
+        else if( startReleased && countBits(waiting) > 1 )
+        {
+            // start with the players shown, so if someone's joined while the screen was
+            // being written then show them first
+            waiting = linkWaitingMask();
+            if( waiting != shownMask )
+                continue;
+            
+            if( linkStartGame(waiting) )
+            {
+                playing = waiting;
+                break;
+            }
+            shownMask = -1;
+        }
+        
+        // send the game to any Gameboys waiting for it, once sure they're there
+        if( linkMultibootWaiting() )
             multibootWaitingTime++;
         else
             multibootWaitingTime = 0;
         
         if( multibootWaitingTime > 30 )
         {
-            waitingMessage("SENDING THE GAME TO", "THE OTHER GAMEBOY...");
+            waitingMessage("SENDING THE GAME TO", "THE OTHER GAMEBOYS...", "");
             
             linkStop();
             int result = multibootSend(bPressed);
             if( MULTIBOOT_CANCELLED == result )
-            {
-                ready = FALSE;
                 break;
+            if( MULTIBOOT_FAILED == result )
+            {
+                waitingMessage("SENDING FAILED,", "TRYING AGAIN...", "");
+                delay(60);
             }
-            
-            if( MULTIBOOT_SENT == result )
-                waitingMessage("SENT! WAITING FOR THE", "OTHER PLAYER...");
-            else
-                waitingMessage("SENDING FAILED,", "TRYING AGAIN...");
             
             linkStart();
             multibootWaitingTime = 0;
+            shownMask = -1;
         }
     }
     
@@ -3304,40 +3514,40 @@ bool waitForOtherPlayer(void)
     turnOffAllSprites();
     copyAllOAM();
     
-    if(!ready)
+    if(!playing)
         linkStop();
-    return ready;
+    return playing;
 }
 
-// play a game against another Gameboy over the link cable
-void twoPlayerGame(void)
+// play a game against other Gameboys over the link cable
+void linkGame(void)
 {
-    if( !waitForOtherPlayer() )
+    u8 playing = waitForPlayers();
+    if(!playing)
         return;
     
-    numPlayers = 2;
-    localPlayer = linkIsMaster() ? 0 : 1;
+    int i;
+    linked = TRUE;
+    localPlayer = linkSlot();
+    for(i=0; i<MAX_PLAYERS; i++)
+        player[i].inGame = (playing >> i) & 1;
     linkLost = FALSE;
     matchOver = FALSE;
     
-    linkBeginGame();
-    
-    // agree a random seed for the game, made up from both Gameboys' random numbers
+    // agree a random seed for the game, made up from all the Gameboys' random numbers
     u32 seed = 0;
-    int i;
-    for(i=0; i<5 && !linkLost; i++)
+    int n;
+    for(n=0; n<5 && !linkLost; n++)
     {
-        u8 mine = rand() & 63;
-        int other = linkExchange(mine);
-        if( LINK_LOST == other )
+        u8 inputs[MAX_PLAYERS];
+        if( LINK_LOST == linkExchange(rand() & 63, inputs) )
             linkLost = TRUE;
-        else if( localPlayer == 0 )
-            seed = (seed << 12) | (mine << 6) | other;
-        else
-            seed = (seed << 12) | (other << 6) | mine;
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].inGame)
+                seed = seed * 67 + inputs[i];
     }
     
-    // everything else the game uses must start the same on both Gameboys
+    // everything else the game uses must start the same on all the Gameboys
     gameRandSeed = seed;
     robotMoveSeed = ROBOT_MOVE_SEED;
     mysteryTokenSeed = MYSTERY_TOKEN_SEED;
@@ -3348,12 +3558,15 @@ void twoPlayerGame(void)
     bool firstLevel = TRUE;
     while( !linkLost )
     {
-        for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+        for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
         
         u32 spriteNum = OAM_LETTERS;
         if(firstLevel)
         {
-            writeText(-1, 40, 0 == localPlayer ? "YOU ARE GREEN" : "YOU ARE RED", &spriteNum);
+            char youAre[20];
+            strcpy(youAre, "YOU ARE ");
+            strcat(youAre, playerName[localPlayer]);
+            writeText(-1, 40, youAre, &spriteNum);
             writeText(-1, 70, "LAST ONE ALIVE WINS", &spriteNum);
         }
         else
@@ -3371,8 +3584,9 @@ void twoPlayerGame(void)
         copyAllOAM();
         
         nuked = FALSE;
-        for(i=0; i<numPlayers; i++)
-            player[i].lifeStatus = ALIVE;
+        for(i=0; i<MAX_PLAYERS; i++)
+            if(player[i].lifeStatus != OUT)
+                player[i].lifeStatus = ALIVE;
         initialiseLevel();
         firstLevel = FALSE;
         
@@ -3397,7 +3611,7 @@ void twoPlayerGame(void)
     }
     
     linkStop();
-    numPlayers = 1;
+    linked = FALSE;
     localPlayer = 0;
 }
 
@@ -3417,6 +3631,9 @@ int main(void)
     int i;
     LZ77UnCompVram(sprites_lz, (void*)OAMdata);
     
+    // make the extra colours of men for linked games
+    buildPlayerColours();
+    
     // init sound fx
     irqInit();
 
@@ -3434,13 +3651,13 @@ int main(void)
     mmInitDefault( (mm_addr)soundbank_bin, 8 );
 
     // load sprite palette
-    for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+    for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
 
     // a Gameboy that's just been sent the game over the link cable goes straight to
     // the two player game
     if( multibooted() )
     {
-        twoPlayerGame();
+        linkGame();
     }
     // skip title screens if in development
     else if(!inDevelopment)
@@ -3494,7 +3711,7 @@ int main(void)
             
             // load sprite palette
             int i;
-            for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+            for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
             // load sprite tile data
             LZ77UnCompVram(sprites_lz, (void*)OAMdata);
             
@@ -3509,7 +3726,7 @@ int main(void)
             u32 firstSpriteOfInstructions = spriteNum;
             writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
             u32 firstSpriteOfMultiplayer = spriteNum;
-            writeText(-1, 100, "2 PLAYER LINK", &spriteNum);
+            writeText(-1, 100, "2-4 PLAYER LINK", &spriteNum);
             
             // cycle the brightness of selected letters
             // for brightness adjust the sprites appear to have to be in semi-transparent mode
@@ -3631,7 +3848,7 @@ int main(void)
             copyAllOAM();
             
             // load sprite palette
-            for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
+            for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
 
         } // end of menu system, now act on it...
         else
@@ -3644,7 +3861,7 @@ int main(void)
             case 0: startLevel = 0; startGameAndManageContinues(); break;
             case 1: startLevel = 7; startGameAndManageContinues(); break;
             case 2: displayStory(); break;
-            case 3: twoPlayerGame(); break;
+            case 3: linkGame(); break;
         }
         
     }

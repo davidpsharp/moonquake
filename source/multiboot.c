@@ -43,7 +43,8 @@
 #define STEP_ERROR              3
 
 extern u8 __boot_method;     // in the cartridge header, set by the BIOS when multibooted
-extern u8 __rom_end__[];
+extern u8 __ewram_overlay_lma[];  // end of the image (the EWRAM overlays aren't used),
+                                    // __rom_end__ also covers .sbss which needn't be sent
 
 static const u8 clientIds[NUM_CLIENTS] = { 2, 4, 8 };
 
@@ -193,7 +194,12 @@ static int confirmHandshakeData(MultiBootParam* mp)
     if( cancelled() )
         return STEP_CANCELLED;
 
-    return (responses[0] >> 8) == ACK_RESPONSE ? STEP_DONE : STEP_ERROR;
+    // (only the Gameboys being sent the game reply, others may be on the cable waiting to play)
+    int i;
+    for(i=0; i<NUM_CLIENTS; i++)
+        if( (mp->client_bit & clientIds[i]) && (responses[i] >> 8) != ACK_RESPONSE )
+            return STEP_ERROR;
+    return STEP_DONE;
 }
 
 // repeat a step while it asks to be retried, then FALSE if it didn't work out
@@ -216,7 +222,7 @@ int multibootSend(bool (*cancel)(void))
     mp.palette_data = PALETTE_DATA;
     mp.boot_srcp = (u8*)EWRAM + HEADER_SIZE;
     // the length must be a multiple of 16
-    mp.boot_endp = (u8*)EWRAM + ((((u32)__rom_end__ - EWRAM) + 15) & ~15);
+    mp.boot_endp = (u8*)EWRAM + ((((u32)__ewram_overlay_lma - EWRAM) + 15) & ~15);
 
     TRY( detectClients(&mp) )
     TRY( compare(&mp, CONFIRM_CLIENTS | mp.client_bit, HANDSHAKE_RESPONSE) )

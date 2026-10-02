@@ -23,10 +23,10 @@
 #include <string.h>
 #include <unistd.h>
 
-#define NUM_GBAS 2
+#define MAX_GBAS_TESTED 4
 #define MAX_SYMS 32
 #define MAX_SCRIPT 64
-#define MAX_SHOTS 64
+#define MAX_SHOTS 512
 
 #define KEY_A       (1 << 0)
 #define KEY_B       (1 << 1)
@@ -68,6 +68,7 @@ struct Gba {
 	int botHold;
 	int pauseAt;            // game frame to press start at, 0 for never
 	int pauseStep;
+	int lobbyPress;
 	int resetAt;            // video frame to reset this Gameboy at (as if switched off), 0 for never
 
 	int frames;
@@ -87,12 +88,17 @@ struct Gba {
 
 static struct GBASIOLockstep lockstep;
 static struct mLockstep* ls;
-static struct Gba gba[NUM_GBAS];
+static struct Gba gba[MAX_GBAS_TESTED];
+static int numGbas = 2;
 static struct Sym syms[MAX_SYMS];
 static int numSyms;
-static uint32_t symFrameDone, symTimer, symNumPlayers, symMatchOver;
+static uint32_t symFrameDone, symTimer, symLinked, symMatchOver;
+static struct Sym infos[MAX_SYMS];      // read but not compared
+static int numInfos;
+static int lobbyPlayers;                // GBA 0 presses start in the lobby when this many are waiting
+static const char* carts[MAX_GBAS_TESTED];
 static int maxFrames = 20000;
-static uint32_t traceAddr[4], traceSize[4], traceLast[NUM_GBAS][4];
+static uint32_t traceAddr[4], traceSize[4], traceLast[MAX_GBAS_TESTED][4];
 static const char* traceName[4];
 static int numTraces;
 static const char* shotDir;
@@ -147,7 +153,7 @@ static bool lsWait(struct mLockstep* l, unsigned mask) {
 static void lsAddCycles(struct mLockstep* l, int id, int32_t cycles) {
 	(void) l;
 	if (!id) {
-		for (int i = 1; i < NUM_GBAS; ++i) {
+		for (int i = 1; i < numGbas; ++i) {
 			struct Gba* p = &gba[i];
 			p->cyclesPosted += cycles;
 			if (p->awake < 1) {
@@ -188,7 +194,7 @@ static void lsUnload(struct mLockstep* l, int id) {
 			p->awake = 1;
 		}
 	} else {
-		for (int i = 1; i < NUM_GBAS; ++i) {
+		for (int i = 1; i < numGbas; ++i) {
 			struct Gba* p = &gba[i];
 			p->cyclesPosted += lockstep.players[0]->eventDiff;
 			if (p->awake < 1) {
@@ -286,7 +292,31 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 	}
 
-	int inGame = (core->busRead8(core, symNumPlayers) == 2);
+	int inGame = core->busRead8(core, symLinked);
+
+	// player 1 starts the game once enough players are waiting in the lobby
+	if (g->id == 0 && lobbyPlayers && !inGame && !g->ended) {
+		uint32_t words = 0;
+		for (int i = 0; i < numInfos; ++i) {
+			if (!strcmp(infos[i].name, "receivedWord")) {
+				words = infos[i].addr;
+			}
+		}
+		int waiting = 1;
+		for (int i = 1; i < 4; ++i) {
+			if (core->busRead16(core, words + i * 2) == 0x8001) {
+				++waiting;
+			}
+		}
+		if (waiting >= lobbyPlayers) {
+			// tap start (the lobby wants it pressed after being let go)
+			if (!g->lobbyPress++) {
+				printf("gba0 frame %d: %d players waiting, pressing start\n", frame, waiting);
+			}
+			core->setKeys(core, (frame / 8) % 2 ? KEY_START : 0);
+			return;
+		}
+	}
 	int timer = core->busRead16(core, symTimer);
 	int frameDone = core->busRead16(core, symFrameDone);
 	int matchOver = core->busRead8(core, symMatchOver);
@@ -359,9 +389,14 @@ static void frameCallback(struct mCoreThread* thread) {
 static void usage(void) {
 	fprintf(stderr, "usage: linktest [options] rom.gba\n"
 	        "  --bios FILE            use a real BIOS (needed for multiboot)\n"
-	        "  --rom2 FILE|none       ROM for the second GBA (default same, none = boot BIOS with no cart)\n"
+	        "  --gbas N               number of Gameboys, 2-4 (default 2)\n"
+	        "  --cart GBA:FILE|none   ROM for one Gameboy (default the same, none = no cartridge,\n"
+	        "                         boot the BIOS to wait for multiboot)\n"
+	        "  --lobby N              GBA 0 presses start in the lobby once N players are waiting\n"
+	        "                         (needs --info receivedWord=...)\n"
+	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
 	        "  --sym NAME=ADDR:SIZE   game state to compare (also needs universalTimer, frameDone,\n"
-	        "                         numPlayers, matchOver)\n"
+	        "                         linked, matchOver)\n"
 	        "  --keys GBA:FRAME:KEYS:LEN   scripted input (KEYS as a GBA key mask)\n"
 	        "  --seed GBA:N           seed for random play\n"
 	        "  --pause GBA:TIMER      press start at that game frame and again 2s later\n"
@@ -375,10 +410,9 @@ static void usage(void) {
 
 int main(int argc, char** argv) {
 	const char* rom = NULL;
-	const char* rom2 = NULL;
 	const char* bios = NULL;
 
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < MAX_GBAS_TESTED; ++i) {
 		gba[i].id = i;
 		gba[i].rng = 0x12345678 + i * 0x9E3779B9;
 		gba[i].lastTimer = -1;
@@ -391,30 +425,46 @@ int main(int argc, char** argv) {
 		int n, f, k, l;
 		if (!strcmp(a, "--bios") && v) {
 			bios = v; ++i;
-		} else if (!strcmp(a, "--rom2") && v) {
-			rom2 = v; ++i;
+		} else if (!strcmp(a, "--gbas") && v) {
+			numGbas = atoi(v); ++i;
+			if (numGbas < 2 || numGbas > MAX_GBAS_TESTED) {
+				usage();
+			}
+		} else if (!strcmp(a, "--cart") && v && sscanf(v, "%d:", &n) == 1 && n < MAX_GBAS_TESTED) {
+			carts[n] = strchr(v, ':') + 1;
+			++i;
+		} else if (!strcmp(a, "--info") && v && numInfos < MAX_SYMS) {
+			struct Sym* s = &infos[numInfos++];
+			if (sscanf(v, "%47[^=]=%x:%x", s->name, &s->addr, &s->size) != 3) {
+				usage();
+			}
+			++i;
+		} else if (!strcmp(a, "--lobby") && v) {
+			lobbyPlayers = atoi(v); ++i;
 		} else if (!strcmp(a, "--sym") && v && numSyms < MAX_SYMS) {
 			struct Sym* s = &syms[numSyms++];
 			if (sscanf(v, "%47[^=]=%x:%x", s->name, &s->addr, &s->size) != 3) {
 				usage();
 			}
 			++i;
-		} else if (!strcmp(a, "--keys") && v && sscanf(v, "%d:%d:%d:%d", &n, &f, &k, &l) == 4) {
+		} else if (!strcmp(a, "--keys") && v && sscanf(v, "%d:%d:%d:%d", &n, &f, &k, &l) == 4 && n < MAX_GBAS_TESTED &&
+		           gba[n].scriptLen < MAX_SCRIPT) {
 			gba[n].script[gba[n].scriptLen++] = (struct ScriptStep) { f, k, l };
 			++i;
-		} else if (!strcmp(a, "--seed") && v && sscanf(v, "%d:%d", &n, &k) == 2) {
+		} else if (!strcmp(a, "--seed") && v && sscanf(v, "%d:%d", &n, &k) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].rng = (uint32_t) k * 2654435761u + 1;
 			++i;
-		} else if (!strcmp(a, "--pause") && v && sscanf(v, "%d:%d", &n, &k) == 2) {
+		} else if (!strcmp(a, "--pause") && v && sscanf(v, "%d:%d", &n, &k) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].pauseAt = k;
 			++i;
 		} else if (!strcmp(a, "--trace") && v && numTraces < 4) {
 			traceName[numTraces++] = v;
 			++i;
-		} else if (!strcmp(a, "--reset") && v && sscanf(v, "%d:%d", &n, &f) == 2) {
+		} else if (!strcmp(a, "--reset") && v && sscanf(v, "%d:%d", &n, &f) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].resetAt = f;
 			++i;
-		} else if (!strcmp(a, "--shot") && v && sscanf(v, "%d:%d", &n, &f) == 2) {
+		} else if (!strcmp(a, "--shot") && v && sscanf(v, "%d:%d", &n, &f) == 2 && n < MAX_GBAS_TESTED &&
+		           gba[n].numShots < MAX_SHOTS - 1) {
 			gba[n].shots[gba[n].numShots++] = f;
 			++i;
 		} else if (!strcmp(a, "--shots") && v) {
@@ -439,12 +489,15 @@ int main(int argc, char** argv) {
 			}
 		}
 	}
+	if (!lobbyPlayers) {
+		lobbyPlayers = numGbas;
+	}
 	symFrameDone = symAddr("frameDone");
 	symTimer = symAddr("universalTimer");
-	symNumPlayers = symAddr("numPlayers");
+	symLinked = symAddr("linked");
 	symMatchOver = symAddr("matchOver");
-	if (!symFrameDone || !symTimer || !symNumPlayers || !symMatchOver) {
-		fprintf(stderr, "need --sym for frameDone, universalTimer, numPlayers and matchOver\n");
+	if (!symFrameDone || !symTimer || !symLinked || !symMatchOver) {
+		fprintf(stderr, "need --sym for frameDone, universalTimer, linked and matchOver\n");
 		return 2;
 	}
 
@@ -466,13 +519,13 @@ int main(int argc, char** argv) {
 	ls->unusedCycles = lsUnusedCycles;
 	ls->unload = lsUnload;
 
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		struct Gba* g = &gba[i];
 		g->core = GBACoreCreate();
 		g->core->init(g->core);
 		mCoreInitConfig(g->core, NULL);
 		mCoreConfigSetValue(&g->core->config, "useBios", bios ? "1" : "0");
-		const char* path = (i && rom2) ? rom2 : rom;
+		const char* path = carts[i] ? carts[i] : rom;
 		int noCart = !strcmp(path, "none");
 		// a Gameboy with no cartridge has to run its BIOS to wait for multiboot
 		mCoreConfigSetValue(&g->core->config, "skipBios", noCart ? "0" : "1");
@@ -512,32 +565,32 @@ int main(int argc, char** argv) {
 		g->thread.logger.logger = &logger;
 	}
 
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		mCoreThreadStart(&gba[i].thread);
 	}
 	while (!stop) {
 		usleep(10000);
-		for (int i = 0; i < NUM_GBAS; ++i) {
+		for (int i = 0; i < numGbas; ++i) {
 			if (mCoreThreadHasCrashed(&gba[i].thread)) {
 				fprintf(stderr, "gba%d crashed\n", i);
 				stop = 1;
 			}
 		}
 	}
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		mCoreThreadEnd(&gba[i].thread);
 	}
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		mCoreThreadStopWaiting(&gba[i].thread);
 	}
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		mCoreThreadJoin(&gba[i].thread);
 	}
 
 	for (int i = 0; i < numSyms; ++i) {
 		if (syms[i].size <= 4) {
 			printf("%s:", syms[i].name);
-			for (int j = 0; j < NUM_GBAS; ++j) {
+			for (int j = 0; j < numGbas; ++j) {
 				uint32_t v = 0;
 				for (uint32_t b = 0; b < syms[i].size; ++b) {
 					v |= gba[j].core->busRead8(gba[j].core, syms[i].addr + b) << (8 * b);
@@ -548,29 +601,36 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// compare the two games frame by frame
-	int compared = 0, onlyOne = 0, firstBad = -1;
+	// compare the games frame by frame, against GBA 0
+	int compared = 0, notAll = 0, firstBad = -1, badGba = 0;
 	for (int t = 0; t < 65536; ++t) {
-		if (gba[0].seen[t] && gba[1].seen[t]) {
+		int seenBy = 0;
+		for (int i = 0; i < numGbas; ++i) {
+			seenBy += gba[i].seen[t];
+		}
+		if (seenBy == numGbas) {
 			++compared;
-			if (gba[0].hashes[t * (numSyms + 1)] != gba[1].hashes[t * (numSyms + 1)] && firstBad < 0) {
-				firstBad = t;
+			for (int i = 1; i < numGbas && firstBad < 0; ++i) {
+				if (gba[0].hashes[t * (numSyms + 1)] != gba[i].hashes[t * (numSyms + 1)]) {
+					firstBad = t;
+					badGba = i;
+				}
 			}
-		} else if (gba[0].seen[t] || gba[1].seen[t]) {
-			++onlyOne;
+		} else if (seenBy) {
+			++notAll;
 		}
 	}
-	for (int i = 0; i < NUM_GBAS; ++i) {
+	for (int i = 0; i < numGbas; ++i) {
 		printf("gba%d: %d frames, %d game frames in %d video frames\n", i, gba[i].frames, gba[i].gameFramesDone,
 		       gba[i].lastGameFrame - gba[i].firstGameFrame + 1);
 		printf("gba%d: game frames took 1 video frame %d times, 2: %d, 3: %d, more (banners): %d\n", i,
 		       gba[i].gaps[0], gba[i].gaps[1], gba[i].gaps[2], gba[i].gaps[3]);
 	}
-	printf("compared %d game frames (%d seen by only one)\n", compared, onlyOne);
+	printf("compared %d game frames (%d not seen by all)\n", compared, notAll);
 	if (firstBad >= 0) {
-		printf("DESYNC at game frame %d in:", firstBad);
+		printf("DESYNC at game frame %d between gba0 and gba%d in:", firstBad, badGba);
 		for (int i = 0; i < numSyms; ++i) {
-			if (gba[0].hashes[firstBad * (numSyms + 1) + i + 1] != gba[1].hashes[firstBad * (numSyms + 1) + i + 1]) {
+			if (gba[0].hashes[firstBad * (numSyms + 1) + i + 1] != gba[badGba].hashes[firstBad * (numSyms + 1) + i + 1]) {
 				printf(" %s", syms[i].name);
 			}
 		}
