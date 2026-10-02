@@ -48,9 +48,10 @@
 
 #include "link.h"
 #include "multiboot.h"
+#include "lz77.h"
  
 
-// include graphics data (bitmaps are LZ77 compressed, see Makefile)
+// include graphics data (bitmaps are LZ77 compressed, see Makefile and lz77.c)
 extern const unsigned short background_Palette[256];
 extern const unsigned short sprites_Palette[256];
 extern const unsigned short titlescreen_Palette[256];
@@ -1011,7 +1012,7 @@ void displayTiledBitmap(const unsigned char* bitmap, const unsigned short* palet
     SetMode(SCREENMODE1 | BG1ENABLE | OBJENABLE | OBJMAP1D );
     
     // load tile data (16 bits at a time)
-    LZ77UnCompVram(bitmap, tiles);
+    unLZ77Vram(bitmap, tiles);
     int i;
     
     // position tiles (optimised version of loop below)
@@ -2124,13 +2125,13 @@ void initialiseLevel(void)
     
    	// load background tile data
     // tile data appears to have to be loaded 16 bits at a time, why????
-    LZ77UnCompVram(background_lz, tiles);
+    unLZ77Vram(background_lz, tiles);
     
     // load sprite palette
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
     // load sprite tile data
-    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
+    unLZ77Vram(sprites_lz, OAMdata);
     
     generateLevel();
     
@@ -3054,7 +3055,7 @@ void displayText()
     for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
 
     // load sprite tile data
-    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
+    unLZ77Vram(sprites_lz, OAMdata);
     
     // tile palette black
     for(i=0; i<256; i++)
@@ -3415,7 +3416,7 @@ int main(void)
     
     // load sprite tile data
     int i;
-    LZ77UnCompVram(sprites_lz, (void*)OAMdata);
+    unLZ77Vram(sprites_lz, OAMdata);
     
     // init sound fx
     irqInit();
@@ -3496,7 +3497,7 @@ int main(void)
             int i;
             for(i=0; i<256; i++) OBJPaletteMem[i] = sprites_Palette[i];
             // load sprite tile data
-            LZ77UnCompVram(sprites_lz, (void*)OAMdata);
+            unLZ77Vram(sprites_lz, OAMdata);
             
             displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
             
