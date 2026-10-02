@@ -72,6 +72,7 @@ struct Gba {
 	int lobbyPress;
 	int leave;              // tap select during the game, so leave once out
 	int unplugWhenOut;      // pull the cable out once out of the game
+	int unplugAt;           // pull the cable out at this frame, 0 for never
 	volatile int unplugRequested;
 	int unplugged;
 	int resetAt;            // video frame to reset this Gameboy at (as if switched off), 0 for never
@@ -85,6 +86,7 @@ struct Gba {
 	int lastTimer;
 	int lastFrameDone;
 	uint32_t* hashes;       // per universalTimer, [timer * (numSyms + 1)]
+	uint8_t* players;       // the player array per universalTimer, to show what differs
 	uint8_t* seen;
 	int ended;              // matchOver seen
 	int shots[MAX_SHOTS];
@@ -100,6 +102,20 @@ static int numSyms;
 static uint32_t symFrameDone, symTimer, symLinked, symMatchOver;
 static struct Sym infos[MAX_SYMS];      // read but not compared
 static int numInfos;
+
+static uint32_t symAddr(const char* name) {
+	for (int i = 0; i < numSyms; ++i) {
+		if (!strcmp(syms[i].name, name)) {
+			return syms[i].addr;
+		}
+	}
+	for (int i = 0; i < numInfos; ++i) {
+		if (!strcmp(infos[i].name, name)) {
+			return infos[i].addr;
+		}
+	}
+	return 0;
+}
 static int lobbyPlayers;                // GBA 0 presses start in the lobby when this many are waiting
 static const char* carts[MAX_GBAS_TESTED];
 static int maxFrames = 20000;
@@ -113,14 +129,7 @@ static uint32_t symPlayer;
 #define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
 #define LIFE_OUT 3
 
-static uint32_t symAddr(const char* name) {
-	for (int i = 0; i < numSyms; ++i) {
-		if (!strcmp(syms[i].name, name)) {
-			return syms[i].addr;
-		}
-	}
-	return 0;
-}
+
 
 // lockstep callbacks: the master (0) runs ahead posting cycles, the slave may only use posted cycles
 static pthread_mutex_t lsMutex;
@@ -164,6 +173,9 @@ static void lsAddCycles(struct mLockstep* l, int id, int32_t cycles) {
 	if (!id) {
 		for (int i = 1; i < numGbas; ++i) {
 			struct Gba* p = &gba[i];
+			if (p->unplugged) {
+				continue;
+			}
 			p->cyclesPosted += cycles;
 			if (p->awake < 1) {
 				p->node.nextEvent += p->cyclesPosted;
@@ -203,8 +215,14 @@ static void lsUnload(struct mLockstep* l, int id) {
 			p->awake = 1;
 		}
 	} else {
+		if (!lockstep.players[0]) {
+			return;
+		}
 		for (int i = 1; i < numGbas; ++i) {
 			struct Gba* p = &gba[i];
+			if (p->unplugged) {
+				continue;
+			}
 			p->cyclesPosted += lockstep.players[0]->eventDiff;
 			if (p->awake < 1) {
 				p->node.nextEvent += p->cyclesPosted;
@@ -331,7 +349,8 @@ static void frameCallback(struct mCoreThread* thread) {
 	int matchOver = core->busRead8(core, symMatchOver);
 
 	// record the game state once per game frame, when that frame's logic is complete
-	if (inGame && !matchOver && timer && frameDone == timer && timer != g->lastFrameDone) {
+	// (an unplugged Gameboy finishes the frame it was on its own, then the link's lost)
+	if (inGame && !matchOver && !g->unplugged && timer && frameDone == timer && timer != g->lastFrameDone) {
 		g->lastFrameDone = timer;
 		uint32_t* h = &g->hashes[timer * (numSyms + 1)];
 		uint32_t all = 0;
@@ -341,6 +360,9 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 		h[0] = all;
 		g->seen[timer] = 1;
+		for (int i = 0; i < 4 * PLAYER_SIZE; ++i) {
+			g->players[timer * 4 * PLAYER_SIZE + i] = core->busRead8(core, symPlayer + i);
+		}
 		if (!g->gameFramesDone++) {
 			g->firstGameFrame = frame;
 		} else {
@@ -381,6 +403,9 @@ static void frameCallback(struct mCoreThread* thread) {
 			keys = KEY_SELECT;
 		}
 	}
+	if (g->unplugAt && frame >= g->unplugAt && !g->unplugged) {
+		g->unplugRequested = 1;
+	}
 	if (g->unplugWhenOut && !g->unplugged && inGame &&
 	    core->busRead8(core, symPlayer + g->id * PLAYER_SIZE + PLAYER_LIFE_STATUS) == LIFE_OUT) {
 		g->unplugRequested = 1;
@@ -413,6 +438,8 @@ static void usage(void) {
 	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
 	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
+	        "  --unplug GBA:FRAME     pull a Gameboy's cable out at that frame (use the last\n"
+	        "                         Gameboys, mGBA renumbers the rest if one's taken from the middle)\n"
 	        "  --sym NAME=ADDR:SIZE   game state to compare (also needs universalTimer, frameDone,\n"
 	        "                         linked, matchOver)\n"
 	        "  --keys GBA:FRAME:KEYS:LEN   scripted input (KEYS as a GBA key mask)\n"
@@ -463,6 +490,9 @@ int main(int argc, char** argv) {
 		} else if (!strcmp(a, "--unplug-out") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
 			gba[n].unplugWhenOut = 1;
 			++i;
+		} else if (!strcmp(a, "--unplug") && v && sscanf(v, "%d:%d", &n, &f) == 2 && n < MAX_GBAS_TESTED) {
+			gba[n].unplugAt = f;
+			++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
 		} else if (!strcmp(a, "--sym") && v && numSyms < MAX_SYMS) {
@@ -510,6 +540,11 @@ int main(int argc, char** argv) {
 		for (int j = 0; j < numSyms; ++j) {
 			if (!strcmp(syms[j].name, traceName[i])) {
 				traceSize[i] = syms[j].size;
+			}
+		}
+		for (int j = 0; j < numInfos; ++j) {
+			if (!strcmp(infos[j].name, traceName[i])) {
+				traceSize[i] = infos[j].size;
 			}
 		}
 	}
@@ -581,6 +616,7 @@ int main(int argc, char** argv) {
 
 		g->hashes = calloc(65536 * (numSyms + 1), sizeof(uint32_t));
 		g->seen = calloc(65536, 1);
+		g->players = calloc(65536, 4 * PLAYER_SIZE);
 		g->awake = 1;
 
 		memset(&g->thread, 0, sizeof(g->thread));
@@ -595,20 +631,33 @@ int main(int argc, char** argv) {
 	}
 	while (!stop) {
 		usleep(10000);
+		int requested = 0;
 		for (int i = 0; i < numGbas; ++i) {
-			if (gba[i].unplugRequested && !gba[i].unplugged) {
-				// as mGBA's Qt frontend does: stop every Gameboy, take this one off the cable
-				for (int j = 0; j < numGbas; ++j) {
-					mCoreThreadInterrupt(&gba[j].thread);
+			requested |= gba[i].unplugRequested && !gba[i].unplugged;
+		}
+		if (requested) {
+			// as mGBA's Qt frontend does: stop every Gameboy, take them off the cable
+			for (int j = 0; j < numGbas; ++j) {
+				mCoreThreadInterrupt(&gba[j].thread);
+			}
+			for (int i = 0; i < numGbas; ++i) {
+				if (gba[i].unplugRequested && !gba[i].unplugged) {
+					GBASIOLockstepDetachNode(&lockstep, &gba[i].node);
+					struct GBA* board = gba[i].core->board;
+					GBASIOSetDriver(&board->sio, NULL, SIO_MULTI);
+					gba[i].unplugged = 1;
+					gba[i].awake = 1;
+					printf("gba%d: unplugged at frame %d\n", i, gba[i].frames);
 				}
-				GBASIOLockstepDetachNode(&lockstep, &gba[i].node);
-				struct GBA* board = gba[i].core->board;
-				GBASIOSetDriver(&board->sio, NULL, SIO_MULTI);
-				gba[i].unplugged = 1;
-				for (int j = 0; j < numGbas; ++j) {
-					mCoreThreadContinue(&gba[j].thread);
+			}
+			for (int j = 0; j < numGbas; ++j) {
+				mCoreThreadContinue(&gba[j].thread);
+			}
+			// an unplugged Gameboy may have been left waiting for the cable, set it going alone
+			for (int i = 0; i < numGbas; ++i) {
+				if (gba[i].unplugged) {
+					mCoreThreadStopWaiting(&gba[i].thread);
 				}
-				printf("gba%d: unplugged at frame %d\n", i, gba[i].frames);
 			}
 		}
 		for (int i = 0; i < numGbas; ++i) {
@@ -682,6 +731,13 @@ int main(int argc, char** argv) {
 			}
 		}
 		printf("\n");
+		for (int i = 0; i < 4 * PLAYER_SIZE; ++i) {
+			uint8_t a = gba[badA].players[firstBad * 4 * PLAYER_SIZE + i];
+			uint8_t b = gba[badB].players[firstBad * 4 * PLAYER_SIZE + i];
+			if (a != b) {
+				printf("  player[%d] byte %d: %02x vs %02x\n", i / PLAYER_SIZE, i % PLAYER_SIZE, a, b);
+			}
+		}
 		return 1;
 	}
 	if (!compared) {

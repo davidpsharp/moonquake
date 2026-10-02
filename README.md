@@ -20,6 +20,11 @@ game with START. Green starts bottom right, red top left, orange top right and p
 and it's the normal game with everyone dropping bombs: 3 lives each, run out and you're out,
 last one alive wins.
 
+If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
+others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.
+Player 1 has to stay connected: its Game Boy runs the link. Unplug rather than switching off
+while still connected, as a switched-off Game Boy on the cable may stop everyone.
+
 Only player 1 needs the game. Switch the others on with no cartridge in: player 1 sends them the
 game over the cable (it takes around half a minute for one, longer for three) and they start up
 ready to play. Game Boys with and without cartridges can be mixed.

@@ -40,6 +40,9 @@ done
 # link state GBA 0 looks at to start the game once everyone's in the lobby
 line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk '$4 == "receivedWord" { print $1 ":" $2 }')
 syms="$syms --info receivedWord=$line"
+# players dropped by the link (as unplugged), all.sh checks no one's dropped who shouldn't be
+line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk '$4 == "dropped" { print $1 ":" $2 }')
+syms="$syms --info dropped=$line"
 
 # skip the credits, then on each Gameboy: up (to 2-4 PLAYER LINK, the last option), A
 script=""

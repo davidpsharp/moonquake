@@ -16,6 +16,7 @@
 #define LINK_MAX_PLAYERS    4
 
 // controller input bits exchanged each frame (6 bits)
+// (never send up and down together, the link uses that, see link.c)
 #define IN_BOMB     1       // A or B
 #define IN_UP       2
 #define IN_DOWN     4
@@ -63,5 +64,9 @@ void linkEndGame(void);
 void linkPlayerOut(int slot);
 // leave the game (this Gameboy's player is out) and stop the link
 void linkLeave(void);
+// slots whose players were dropped in the last linkExchange() as their Gameboys were unplugged
+// (on every Gameboy at the same frame), their input for that frame is 0 and the game should
+// put them out
+u8 linkDropped(void);
 
 #endif

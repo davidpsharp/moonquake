@@ -17,6 +17,12 @@
 // no two are ever more than one frame apart. If another has already moved on to frame n+1
 // its word still carries its input for frame n in the low bits.
 //
+// If a player's Gameboy is unplugged mid-game the master decides that player is out, and says
+// so in place of its own input for the frame everyone's stuck on (an input no one can press,
+// up and down together, plus which slots to drop): no one can have got past that frame without
+// the missing player's input. All the Gameboys see the same transfers, so they all have the
+// same last word from the missing player, with its inputs up to then.
+//
 // Before a game the master sends WORD_START with the slots playing, each of those replies
 // WORD_JOINED, and once they all have the game starts. (Not a game word: that would be taken
 // as the input for the first frame.)
@@ -57,9 +63,18 @@
 #define NO_TRANSFERS_TIMEOUT    60      // cable pulled out or a Gameboy switched off
 #define NO_PROGRESS_TIMEOUT     (60*10) // a Gameboy stopped playing
 #define OUT_PLAYER_TIMEOUT      (60*5)  // a Gameboy whose player is out of the game stopped
+#define UNPLUGGED_TIMEOUT       30      // a slot's been empty this long, drop its player
+
+// master's input saying it's dropping players: up and down together (see link.h), with the
+// slots in the other bits
+#define DROP_INPUT          (IN_UP | IN_DOWN)
+#define IS_DROP_INPUT(i)    (((i) & DROP_INPUT) == DROP_INPUT)
+static const u8 dropSlotBits[LINK_MAX_PLAYERS] = { 0, IN_BOMB, IN_LEFT, IN_RIGHT };
 
 static volatile u16 sendWord = WORD_WAITING;
 static volatile u16 receivedWord[LINK_MAX_PLAYERS];
+static volatile u16 lastGameWord[LINK_MAX_PLAYERS];     // not overwritten when a slot empties
+static volatile u32 emptySince[LINK_MAX_PLAYERS];       // when a slot emptied, 0 if it isn't
 static volatile u8 slot;
 static volatile u8 masterRepeats;       // transfers in a row the master's word hasn't changed
 static volatile u32 transfers;          // count of good transfers, to spot the cable being pulled
@@ -68,6 +83,9 @@ static bool linkActive;
 
 static u8 playing;                      // slots in the game
 static u8 outOfGame;                    // slots whose players are out, their input isn't needed
+static u8 dropped;                      // slots dropped during the last exchange
+static u8 gameSlot;                     // this Gameboy's slot, and whether it's the master,
+static bool gameMaster;                 // fixed for a game (an unplugged slave can look like a master)
 static u8 frame;                        // frame number modulo 4
 static u8 previousInput;
 
@@ -93,7 +111,16 @@ void linkOnSerial(void)
     else
         masterRepeats = 0;
     for(i=0; i<LINK_MAX_PLAYERS; i++)
-        receivedWord[i] = (&REG_SIOMULTI0)[i];
+    {
+        u16 word = (&REG_SIOMULTI0)[i];
+        receivedWord[i] = word;
+        if( WORD_IS_GAME(word) )
+            lastGameWord[i] = word;
+        if( word != WORD_NONE )
+            emptySince[i] = 0;
+        else if( !emptySince[i] )
+            emptySince[i] = vblanks | 1;
+    }
     slot = (cnt >> SIO_ID_SHIFT) & 3;
     transfers++;
 
@@ -205,8 +232,13 @@ bool linkMultibootWaiting(void)
 
 static void beginGame(u8 mask)
 {
+    gameSlot = linkSlot();
+    gameMaster = isMaster();
     playing = mask;
     outOfGame = 0;
+    int i;
+    for(i=0; i<LINK_MAX_PLAYERS; i++)
+        lastGameWord[i] = WORD_NONE;
     frame = 0;
     previousInput = 0;
 }
@@ -253,6 +285,63 @@ u8 linkGameStarted(void)
     return 0;
 }
 
+// a player's input for the current frame from their latest game word, -1 if not there yet
+static int inputForFrame(int i)
+{
+    u16 word = lastGameWord[i];
+    if( !WORD_IS_GAME(word) )
+        return -1;
+    if( WORD_FRAME(word) == frame )
+        return WORD_INPUT(word);
+    if( WORD_FRAME(word) == ((frame + 1) & 3) )
+        return WORD_PREV_INPUT(word);
+    return -1;  // still on the frame before (or not started)
+}
+
+static void dropPlayers(u8 input);
+
+// the master: drop players whose Gameboys have been unplugged and are holding everyone up,
+// by changing its own input for this frame (see the top of the file)
+static void dropUnpluggedPlayers(u32 lastTransferTime)
+{
+    // with no one at all left on the cable there may be no transfers, so nothing to say the
+    // slots are empty
+    bool allGone = vblanks - lastTransferTime > UNPLUGGED_TIMEOUT;
+
+    u8 drop = 0;
+    int i;
+    for(i=1; i<LINK_MAX_PLAYERS; i++)
+    {
+        u32 since = emptySince[i];
+        bool empty = allGone || (since && vblanks - since > UNPLUGGED_TIMEOUT);
+        if( (playing & ~outOfGame & (1 << i)) && inputForFrame(i) < 0 && empty )
+            drop |= 1 << i;
+    }
+    if( !drop )
+        return;
+
+    u8 input = DROP_INPUT;
+    for(i=1; i<LINK_MAX_PLAYERS; i++)
+        if( drop & (1 << i) )
+            input |= dropSlotBits[i];
+    sendWord = 0x4000 | (frame << 12) | (input << 6) | previousInput;
+    dropPlayers(input);
+}
+
+// act on a drop input from the master
+static void dropPlayers(u8 input)
+{
+    int i;
+    for(i=1; i<LINK_MAX_PLAYERS; i++)
+    {
+        if( (input & dropSlotBits[i]) && (playing & (1 << i)) )
+        {
+            dropped |= 1 << i;
+            playing &= ~(1 << i);
+        }
+    }
+}
+
 // wait for every other player's input for the current frame, if finishing a game then
 // a Gameboy having already gone back to waiting counts too
 static int waitForFrame(bool finishing, u8* inputs)
@@ -260,10 +349,17 @@ static int waitForFrame(bool finishing, u8* inputs)
     u32 lastTransfers = transfers;
     u32 lastTransferTime = vblanks;
     u32 startTime = vblanks;
-    u8 me = linkSlot();
+    u8 me = gameSlot;
 
     for( ; ; )
     {
+        // unplugged, a slave can look to itself like a master
+        if( isMaster() != gameMaster )
+            return LINK_LOST;
+
+        if( gameMaster && !finishing )
+            dropUnpluggedPlayers(lastTransferTime);
+
         bool haveAll = TRUE;
         int i;
         for(i=0; i<LINK_MAX_PLAYERS; i++)
@@ -271,11 +367,17 @@ static int waitForFrame(bool finishing, u8* inputs)
             if( i == me || !(playing & (1 << i)) )
                 continue;
 
+            int input = inputForFrame(i);
             u16 word = receivedWord[i];
-            if( WORD_IS_GAME(word) && WORD_FRAME(word) == frame )
-                inputs[i] = WORD_INPUT(word);
-            else if( WORD_IS_GAME(word) && WORD_FRAME(word) == ((frame + 1) & 3) )
-                inputs[i] = WORD_PREV_INPUT(word);
+            if( input >= 0 )
+            {
+                if( 0 == i && IS_DROP_INPUT(input) )
+                {
+                    dropPlayers(input);
+                    input = 0;
+                }
+                inputs[i] = input;
+            }
             else if( finishing && word == WORD_WAITING )
                 inputs[i] = 0;
             else if( (outOfGame & (1 << i)) && (!WORD_IS_GAME(word) || vblanks - startTime > OUT_PLAYER_TIMEOUT) )
@@ -286,7 +388,7 @@ static int waitForFrame(bool finishing, u8* inputs)
                 inputs[i] = 0;
             }
             else
-                haveAll = FALSE;    // still on the frame before (or the master's still starting)
+                haveAll = FALSE;
         }
         if( haveAll )
             return 0;
@@ -317,14 +419,34 @@ void linkLeave(void)
 
 int linkExchange(u8 input, u8* inputs)
 {
+    // players not waited for (dropped, or out and gone) have no input
+    int i;
+    for(i=0; i<LINK_MAX_PLAYERS; i++)
+        inputs[i] = 0;
+
+    dropped = 0;
     sendWord = 0x4000 | (frame << 12) | (input << 6) | previousInput;
 
     int result = waitForFrame(FALSE, inputs);
-    inputs[linkSlot()] = input;
 
-    previousInput = input;
+    // the master may have swapped its input for a drop (see dropUnpluggedPlayers())
+    u8 sent = WORD_INPUT(sendWord);
+    if( gameMaster && IS_DROP_INPUT(sent) )
+    {
+        input = 0;
+        previousInput = sent;   // so a Gameboy a frame behind sees the drop too
+    }
+    else
+        previousInput = input;
+    inputs[gameSlot] = input;
+
     frame = (frame + 1) & 3;
     return result;
+}
+
+u8 linkDropped(void)
+{
+    return dropped;
 }
 
 void linkEndGame(void)
@@ -344,7 +466,7 @@ void linkEndGame(void)
         bool anyPlaying = FALSE;
         int i;
         for(i=0; i<LINK_MAX_PLAYERS; i++)
-            if( i != linkSlot() && (playing & (1 << i)) && WORD_IS_GAME(receivedWord[i]) )
+            if( i != gameSlot && (playing & (1 << i)) && WORD_IS_GAME(receivedWord[i]) )
                 anyPlaying = TRUE;
         if( !anyPlaying || vblanks - startTime > NO_TRANSFERS_TIMEOUT )
             break;

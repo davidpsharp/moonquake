@@ -360,6 +360,7 @@ mm_sound_effect arg = {
 bool linkLost;      // set when the other Gameboy stops answering in a linked game
 bool matchOver;     // set when a linked game has been won
 bool leftGame;      // set when this Gameboy's player, out of the game, chose to leave
+u8 playersDropped;  // players whose Gameboys have been unplugged, not yet dealt with
 
 // random numbers for the game itself, kept apart from rand() so that two linked Gameboys
 // can be given the same seed and make the same random choices
@@ -1103,6 +1104,11 @@ u8 readLocalInput(void)
     if( KEY_DOWN( KEYSTART ) )
         input |= IN_START;
     
+    // up and down together means something else to the link (and isn't possible on a real
+    // Gameboy anyway)
+    if( (input & IN_UP) && (input & IN_DOWN) )
+        input &= ~IN_DOWN;
+    
     return input;
 }
 
@@ -1121,6 +1127,7 @@ bool readInputs(void)
             linkLost = TRUE;
             return FALSE;
         }
+        playersDropped |= linkDropped();
         
         // players out of the game have no say in it, then if their Gameboy leaves the
         // game's the same whenever the others notice (see linkPlayerOut())
@@ -2809,15 +2816,34 @@ void showGameBanner(const char* line1, const char* line2)
 }
 
 // handles players dying in a linked game (called once no one is still in the middle of dying,
-// so players dying together are dealt with together)
+// so players dying together are dealt with together), and players whose Gameboys have been
+// unplugged (they're out)
 // returns TRUE if the game's over
-int handleLinkedDeaths(void)
+int handleLinkedDeaths(u8 unplugged)
 {
     int i;
     int numInGame = 0;
     int numDead = 0;
     int lastDead = 0;
     bool localWentOut = FALSE;
+    int numUnplugged = 0;
+    int lastUnplugged = 0;
+    
+    for(i=0; i<MAX_PLAYERS; i++)
+    {
+        if( player[i].inGame && (unplugged & (1 << i)) && player[i].lifeStatus != OUT )
+        {
+            player[i].lifeStatus = OUT;
+            numUnplugged++;
+            lastUnplugged = i;
+        }
+    }
+    if(numUnplugged)
+    {
+        // take them off the screen now, before any banner
+        drawPlayers();
+        copyGameOAM();
+    }
     for(i=0; i<MAX_PLAYERS; i++)
     {
         struct Player* p = &player[i];
@@ -2885,9 +2911,19 @@ int handleLinkedDeaths(void)
         return TRUE;
     }
     
-    // say who died and how many lives everyone has left
+    // say who died (or was unplugged) and how many lives everyone has left
     char line1[24];
-    if(nuked)
+    if(numUnplugged && !numDead)
+    {
+        if(numUnplugged > 1)
+            strcpy(line1, "PLAYERS UNPLUGGED");
+        else
+        {
+            strcpy(line1, playerName[lastUnplugged]);
+            strcat(line1, " UNPLUGGED");
+        }
+    }
+    else if(nuked)
         strcpy(line1, "REACTOR EXPLOSION");
     else if(numDead > 1)
         strcpy(line1, numDead == numInGame ? "EVERYONE DIED" : "BOOM! MULTI-KILL");
@@ -2932,7 +2968,7 @@ int handleLinkedDeaths(void)
     {
         strcpy(line1, "YOU'RE OUT");
         // (player 1's Gameboy runs the link so can't leave)
-        strcpy(line2, linkIsMaster() ? "BUT KEEP WATCHING" : "SELECT LEAVES GAME");
+        strcpy(line2, 0 == localPlayer ? "BUT KEEP WATCHING" : "SELECT LEAVES GAME");
     }
     showGameBanner(line1, line2);
     
@@ -3079,7 +3115,7 @@ void gameLoop(void)
             {
                 if( anyPlayer(DEAD) )
                 {
-                    if( handleLinkedDeaths() )
+                    if( handleLinkedDeaths(0) )
                         return;
                 }
                 
@@ -3167,7 +3203,7 @@ void gameLoop(void)
             robotAI();
         
         // a player out of a linked game can leave it (except player 1, whose Gameboy runs the link)
-        if( linked && player[localPlayer].lifeStatus == OUT && !linkIsMaster() && KEY_DOWN( KEYSELECT ) )
+        if( linked && player[localPlayer].lifeStatus == OUT && 0 != localPlayer && KEY_DOWN( KEYSELECT ) )
         {
             linkLeave();
             leftGame = TRUE;
@@ -3190,6 +3226,15 @@ void gameLoop(void)
             // stays in this function until unpaused
             pauseActivated();
             if(linkLost)
+                return;
+        }
+        
+        // players whose Gameboys have been unplugged are out (on every Gameboy at this frame)
+        if(playersDropped)
+        {
+            u8 unplugged = playersDropped;
+            playersDropped = 0;
+            if( handleLinkedDeaths(unplugged) )
                 return;
         }
         
@@ -3561,6 +3606,7 @@ void linkGame(void)
     linkLost = FALSE;
     matchOver = FALSE;
     leftGame = FALSE;
+    playersDropped = 0;
     
     // agree a random seed for the game, made up from all the Gameboys' random numbers
     u32 seed = 0;
