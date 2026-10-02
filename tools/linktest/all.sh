@@ -5,7 +5,7 @@
 #
 #   tools/linktest/all.sh [path to GBA BIOS, needed for the multiboot tests]
 here=$(cd "$(dirname "$0")" && pwd)
-bios=${1:-$HOME/gba/GBA.BIOS}
+bios=${1:-$HOME/gba/gba_bios.bin}
 seeds="--seed 0:5 --seed 1:6 --seed 2:7 --seed 3:8"
 failed=0
 

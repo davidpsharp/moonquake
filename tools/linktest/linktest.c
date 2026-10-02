@@ -76,6 +76,9 @@ struct Gba {
 	int unplugAt;           // pull the cable out at this frame, 0 for never
 	volatile int unplugRequested;
 	int unplugged;
+	int noCart;             // waiting to be sent the game by multiboot, until gameLoaded
+	int gameLoaded;
+	int gameRunningFrames;  // frames since a Gameboy sent the game was seen running it
 	int botAlways;          // random play outside linked games too (after the menus)
 	int ghosts;             // report dead robots whose sprites are on screen
 	FILE* audio;            // sound output, 16 bit stereo
@@ -346,11 +349,36 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 	}
 
-	for (int i = 0; i < numTraces; ++i) {
+	for (int i = 0; i < numTraces && !(g->noCart && !g->gameLoaded); ++i) {
 		uint32_t v = traceSize[i] == 1 ? core->busRead8(core, traceAddr[i]) : core->busRead16(core, traceAddr[i]);
 		if (v != traceLast[g->id][i] || frame == 0) {
 			printf("gba%d frame %d: %s = %x\n", g->id, frame, traceName[i], v);
 			traceLast[g->id][i] = v;
+		}
+	}
+
+	// A Gameboy with no cartridge has no game until it's been sent one: until then whatever's
+	// at the game's addresses is from the BIOS. The header arrives first (in EWRAM, where the
+	// game runs, and where mGBA loads a ROM linked for it), so wait until it matches player 1's
+	// and the CPU's been seen running code there, then a few frames for the game's start up.
+	if (g->noCart && !g->gameLoaded) {
+		struct mCore* cart = gba[0].core;
+		int same = core->busRead32(core, 0x020000A0) != 0;
+		for (uint32_t a = 0xA0; a < 0xC0; a += 4) {
+			if (core->busRead32(core, 0x02000000 + a) != cart->busRead32(cart, 0x02000000 + a)) {
+				same = 0;
+			}
+		}
+		uint32_t pc = ((struct GBA*) core->board)->cpu->gprs[15];
+		if (same && (g->gameRunningFrames || (pc >= 0x02000000 && pc < 0x03000000))) {
+			g->gameRunningFrames++;
+		}
+		if (g->gameRunningFrames > 10) {
+			g->gameLoaded = 1;
+			printf("gba%d: game arrived by multiboot, running at frame %d\n", g->id, frame);
+		} else {
+			core->setKeys(core, 0);
+			return;
 		}
 	}
 
@@ -681,6 +709,7 @@ int main(int argc, char** argv) {
 		mCoreConfigSetValue(&g->core->config, "useBios", bios ? "1" : "0");
 		const char* path = carts[i] ? carts[i] : rom;
 		int noCart = !strcmp(path, "none");
+		g->noCart = noCart;
 		// a Gameboy with no cartridge has to run its BIOS to wait for multiboot
 		mCoreConfigSetValue(&g->core->config, "skipBios", noCart ? "0" : "1");
 		mCoreLoadConfig(g->core);
