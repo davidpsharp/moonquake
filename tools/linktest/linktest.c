@@ -124,6 +124,9 @@ static const char* traceName[4];
 static int numTraces;
 static const char* shotDir;
 static volatile int stop;
+static int dumpGba = -1, dumpFrame;
+static uint32_t dumpAddr, dumpLen;
+static const char* dumpFile;
 static uint32_t symPlayer;
 #define PLAYER_SIZE 48          // sizeof(struct Player) in the game
 #define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
@@ -300,6 +303,16 @@ static void frameCallback(struct mCoreThread* thread) {
 	struct mCore* core = g->core;
 	int frame = g->frames++;
 
+	if (g->id == dumpGba && frame == dumpFrame) {
+		FILE* f = fopen(dumpFile, "wb");
+		for (uint32_t i = 0; f && i < dumpLen; ++i) {
+			fputc(core->busRead8(core, dumpAddr + i), f);
+		}
+		if (f) {
+			fclose(f);
+		}
+	}
+
 	if (g->resetAt && frame == g->resetAt) {
 		core->reset(core);
 		g->scriptLen = 0;
@@ -438,6 +451,7 @@ static void usage(void) {
 	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
 	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
+	        "  --dump GBA:FRAME:ADDR:LEN:FILE   save memory (hex address and length) to a file\n"
 	        "  --unplug GBA:FRAME     pull a Gameboy's cable out at that frame (use the last\n"
 	        "                         Gameboys, mGBA renumbers the rest if one's taken from the middle)\n"
 	        "  --sym NAME=ADDR:SIZE   game state to compare (also needs universalTimer, frameDone,\n"
@@ -492,6 +506,13 @@ int main(int argc, char** argv) {
 			++i;
 		} else if (!strcmp(a, "--unplug") && v && sscanf(v, "%d:%d", &n, &f) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].unplugAt = f;
+			++i;
+		} else if (!strcmp(a, "--dump") && v) {
+			static char file[256];
+			if (sscanf(v, "%d:%d:%x:%x:%255s", &dumpGba, &dumpFrame, &dumpAddr, &dumpLen, file) != 5) {
+				usage();
+			}
+			dumpFile = file;
 			++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
