@@ -129,6 +129,12 @@ static const char* traceName[4];
 static int numTraces;
 static const char* shotDir;
 static volatile int stop;
+struct Poke {
+	int gba, frame;
+	uint32_t addr, value;
+};
+static struct Poke pokes[32];
+static int numPokes;
 static int dumpGba = -1, dumpFrame;
 static uint32_t dumpAddr, dumpLen;
 static const char* dumpFile;
@@ -308,6 +314,11 @@ static void frameCallback(struct mCoreThread* thread) {
 	struct mCore* core = g->core;
 	int frame = g->frames++;
 
+	for (int i = 0; i < numPokes; ++i) {
+		if (pokes[i].gba == g->id && pokes[i].frame == frame) {
+			core->busWrite8(core, pokes[i].addr, pokes[i].value);
+		}
+	}
 	if (g->id == dumpGba && frame == dumpFrame) {
 		FILE* f = fopen(dumpFile, "wb");
 		for (uint32_t i = 0; f && i < dumpLen; ++i) {
@@ -485,6 +496,7 @@ static void usage(void) {
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
 	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
 	        "  --dump GBA:FRAME:ADDR:LEN:FILE   save memory (hex address and length) to a file\n"
+	        "  --poke GBA:FRAME:ADDR:VALUE   write a byte (hex address and value) at that frame\n"
 	        "  --bot GBA              random play in single player games too\n"
 	        "  --ghosts GBA           report dead robots whose sprites are on screen (needs robot)\n"
 	        "  --audio GBA:FILE       save the sound as raw 16 bit stereo\n"
@@ -549,6 +561,12 @@ int main(int argc, char** argv) {
 				usage();
 			}
 			dumpFile = file;
+			++i;
+		} else if (!strcmp(a, "--poke") && v && numPokes < 32) {
+			struct Poke* pk = &pokes[numPokes++];
+			if (sscanf(v, "%d:%d:%x:%x", &pk->gba, &pk->frame, &pk->addr, &pk->value) != 4) {
+				usage();
+			}
 			++i;
 		} else if (!strcmp(a, "--bot") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
 			gba[n].botAlways = 1;
