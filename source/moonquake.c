@@ -3589,11 +3589,12 @@ void showSending(void)
 }
 
 // letters kept for the link diagnostics
-#define OAM_DIAGNOSTICS 84
+#define OAM_DIAGNOSTICS 76
 
 // while L's held on the waiting screen, show what each slot on the cable is sending and
 // whether the hardware says all the Gameboys on it are ready, for checking a link setup:
-// 8001 waiting to play, 0000 the BIOS waiting to be sent the game, FFFF nothing there
+// 8001 waiting to play, 0000 the BIOS waiting to be sent the game, FFFF nothing there.
+// Below that, how many transfers have finished and failed (counting up, last 3 digits).
 void showLinkDiagnostics(bool show)
 {
     static bool shown;
@@ -3629,9 +3630,21 @@ void showLinkDiagnostics(bool show)
     text[n++] = linkAllReady() ? 'R' : '-';
     text[n] = 0;
     
+    char counts[] = "OK XXX BAD XXX";
+    u32 good = linkTransfers(FALSE) % 1000;
+    u32 bad = linkTransfers(TRUE) % 1000;
+    for(n=0; n<3; n++)
+    {
+        counts[5 - n] = '0' + good % 10;
+        counts[13 - n] = '0' + bad % 10;
+        good /= 10;
+        bad /= 10;
+    }
+    
     turnOffSprites(OAM_DIAGNOSTICS, OAM_LASTLETTER + 1);
     u32 spriteNum = OAM_DIAGNOSTICS;
-    writeTextImmediately(-1, 106, text, &spriteNum, -1);
+    writeTextImmediately(-1, 102, text, &spriteNum, -1);
+    writeTextImmediately(-1, 116, counts, &spriteNum, -1);
     copyAllOAM();
     shown = TRUE;
 }

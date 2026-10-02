@@ -78,6 +78,7 @@ static volatile u32 emptySince[LINK_MAX_PLAYERS];       // when a slot emptied, 
 static volatile u8 slot;
 static volatile u8 masterRepeats;       // transfers in a row the master's word hasn't changed
 static volatile u32 transfers;          // count of good transfers, to spot the cable being pulled
+static volatile u32 failedTransfers;    // and of ones with the error flag set (for diagnostics)
 static volatile u32 vblanks;
 static bool linkActive;
 
@@ -99,7 +100,10 @@ void linkOnSerial(void)
 {
     u16 cnt = REG_SIOCNT;
     if( cnt & SIO_MULTI_ERROR )
+    {
+        failedTransfers++;
         return;
+    }
 
     int i;
     u16 masterWord = REG_SIOMULTI0;
@@ -229,6 +233,11 @@ u16 linkSlotWord(int slot)
 bool linkAllReady(void)
 {
     return (REG_SIOCNT & SIO_ALL_READY) != 0;
+}
+
+u32 linkTransfers(bool failed)
+{
+    return failed ? failedTransfers : transfers;
 }
 
 bool linkMultibootWaiting(void)
