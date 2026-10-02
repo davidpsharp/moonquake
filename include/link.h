@@ -16,7 +16,7 @@
 #define LINK_MAX_PLAYERS    4
 
 // controller input bits exchanged each frame (6 bits)
-// (never send up and down together, the link uses that, see link.c)
+// (up and down together is used by the link, linkExchange() sends up alone instead)
 #define IN_BOMB     1       // A or B
 #define IN_UP       2
 #define IN_DOWN     4

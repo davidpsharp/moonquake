@@ -424,6 +424,11 @@ int linkExchange(u8 input, u8* inputs)
     for(i=0; i<LINK_MAX_PLAYERS; i++)
         inputs[i] = 0;
 
+    // up and down together is the master's drop signal, so no input may be that (it isn't
+    // possible on a real Gameboy's d-pad, but whatever's sent may not be from the d-pad)
+    if( IS_DROP_INPUT(input) )
+        input &= ~IN_DOWN;
+
     dropped = 0;
     sendWord = 0x4000 | (frame << 12) | (input << 6) | previousInput;
 
