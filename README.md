@@ -13,6 +13,38 @@ Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
 
 [Homepage](https://davidsharp.com/gba/)
 
+## saving a game
+In a single player game, pause with START and press SELECT to save and go back to the title
+menu. CONTINUE SAVED GAME then carries on from exactly where you were; the save's used up when
+you continue, so to stop again pause and save again. It's kept in the cartridge's battery backed
+SRAM (a Game Boy that was sent the game by multiboot has nowhere to save).
+
+## 2-4 player link game
+Connect up to four Game Boy Advances with link cables and choose **2-4 PLAYER LINK** on each. The
+Game Boy with the small purple plug in is player 1 (green): it shows who's connected and starts the
+game with START. Green starts bottom right, red top left, orange top right and pink bottom left,
+and it's the normal game with everyone dropping bombs: 3 lives each, run out and you're out,
+last one alive wins.
+
+If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
+others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.
+Player 1 has to stay connected: its Game Boy runs the link. Unplug rather than switching off
+while still connected, as a switched-off Game Boy on the cable may stop everyone.
+
+Only player 1 needs the game. Switch the others on with no cartridge in: player 1 sends them the
+game over the cable (it takes around half a minute for one, longer for three) and they start up
+ready to play. Game Boys with and without cartridges can be mixed.
+
+## building
+With devkitPro (devkitARM, libgba, maxmod) installed: `make`. The game is linked to run from
+EWRAM so it can send itself by multiboot; started from a cartridge it copies itself there first.
+
+`tools/linktest/run.sh` plays random two player games between two emulated Game Boys linked
+together and checks the games stay identical frame by frame. It needs libmgba built from source,
+see the script. `tools/linktest/all.sh` runs the lot: 2-4 players, pausing, a Game Boy being
+switched off, and sending the game by multiboot (that needs a GBA BIOS file).
+
 ## changes
+* October 2026 - 2-4 player deathmatch over the link cable, with multiboot so only one Game Boy needs the game.
 * May 2023 - Migrated to latest GBA toolchain (devKitArm) and early experiments with 2-player link play across two linked Game Boys.
 * 2004 - Original release.

@@ -26,6 +26,7 @@ SOURCES		:= source
 INCLUDES	:= include
 DATA		:=
 MUSIC		:= maxmod_data
+GRAPHICS	:= graphics
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -83,6 +84,11 @@ CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+
+# bitmaps are stored LZ77 compressed (to keep the game small enough to multiboot) and
+# unpacked straight into VRAM by the BIOS
+LZFILES		:=	$(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.raw.c)))
+BINFILES	+=	$(LZFILES:.raw.c=.lz)
 
 ifneq ($(strip $(MUSIC)),)
 	export AUDIOFILES	:=	$(foreach dir,$(notdir $(wildcard $(MUSIC)/*.*)),$(CURDIR)/$(MUSIC)/$(dir))
@@ -163,6 +169,29 @@ soundbank.bin soundbank.h : $(AUDIOFILES)
 	@echo $(notdir $<)
 	@$(bin2o)
 
+
+#---------------------------------------------------------------------------------
+# link to run from EWRAM so the game can be sent to another Gameboy by multiboot,
+# when it's started from a cartridge it copies itself to EWRAM first
+#---------------------------------------------------------------------------------
+$(OUTPUT).elf	:	$(OFILES)
+	@echo linking multiboot
+	$(SILENTCMD)$(LD) -specs=gba_mb.specs $(LDFLAGS) $(OFILES) $(LIBPATHS) $(LIBS) -o $@
+
+#---------------------------------------------------------------------------------
+# compress a bitmap held as a C array (compile it, take out the bytes, LZ77 them)
+#---------------------------------------------------------------------------------
+%.lz	:	%.raw.c
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	@$(CC) -c $< -o $*.raw.o
+	@$(OBJCOPY) -O binary -j .rodata $*.raw.o $*.raw.bin
+	@$(DEVKITPRO)/tools/bin/gbalzss --vram e $*.raw.bin $@ > /dev/null
+
+.PRECIOUS: %.lz
+
+%.lz.o	%_lz.h	:	%.lz
+	@$(bin2o)
 
 -include $(DEPSDIR)/*.d
 #---------------------------------------------------------------------------------------

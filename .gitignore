@@ -73,3 +73,5 @@ Mkfile.old
 dkms.conf
 
 
+tools/linktest/linktest
+build/
