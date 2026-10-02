@@ -135,9 +135,13 @@ struct Poke {
 };
 static struct Poke pokes[32];
 static int numPokes;
-static int dumpGba = -1, dumpFrame;
-static uint32_t dumpAddr, dumpLen;
-static const char* dumpFile;
+struct Dump {
+	int gba, frame;
+	uint32_t addr, len;
+	char file[256];
+};
+static struct Dump dumps[32];
+static int numDumps;
 static uint32_t symPlayer, symRobot;
 #define PLAYER_SIZE 48          // sizeof(struct Player) in the game
 #define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
@@ -319,13 +323,15 @@ static void frameCallback(struct mCoreThread* thread) {
 			core->busWrite8(core, pokes[i].addr, pokes[i].value);
 		}
 	}
-	if (g->id == dumpGba && frame == dumpFrame) {
-		FILE* f = fopen(dumpFile, "wb");
-		for (uint32_t i = 0; f && i < dumpLen; ++i) {
-			fputc(core->busRead8(core, dumpAddr + i), f);
-		}
-		if (f) {
-			fclose(f);
+	for (int d = 0; d < numDumps; ++d) {
+		if (dumps[d].gba == g->id && dumps[d].frame == frame) {
+			FILE* f = fopen(dumps[d].file, "wb");
+			for (uint32_t i = 0; f && i < dumps[d].len; ++i) {
+				fputc(core->busRead8(core, dumps[d].addr + i), f);
+			}
+			if (f) {
+				fclose(f);
+			}
 		}
 	}
 
@@ -555,12 +561,11 @@ int main(int argc, char** argv) {
 		} else if (!strcmp(a, "--unplug") && v && sscanf(v, "%d:%d", &n, &f) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].unplugAt = f;
 			++i;
-		} else if (!strcmp(a, "--dump") && v) {
-			static char file[256];
-			if (sscanf(v, "%d:%d:%x:%x:%255s", &dumpGba, &dumpFrame, &dumpAddr, &dumpLen, file) != 5) {
+		} else if (!strcmp(a, "--dump") && v && numDumps < 32) {
+			struct Dump* d = &dumps[numDumps++];
+			if (sscanf(v, "%d:%d:%x:%x:%255s", &d->gba, &d->frame, &d->addr, &d->len, d->file) != 5) {
 				usage();
 			}
-			dumpFile = file;
 			++i;
 		} else if (!strcmp(a, "--poke") && v && numPokes < 32) {
 			struct Poke* pk = &pokes[numPokes++];

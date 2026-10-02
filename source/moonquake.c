@@ -48,6 +48,7 @@
 #include "link.h"
 #include "multiboot.h"
 #include "lz77.h"
+#include "savegame.h"
  
 
 // include graphics data (bitmaps are LZ77 compressed, see Makefile and lz77.c)
@@ -360,11 +361,38 @@ mm_sound_effect arg = {
 bool linkLost;      // set when the other Gameboy stops answering in a linked game
 bool matchOver;     // set when a linked game has been won
 bool leftGame;      // set when this Gameboy's player, out of the game, chose to leave
+bool quitToMenu;    // set when the player's saved the game from the pause screen to continue later
 u8 playersDropped;  // players whose Gameboys have been unplugged, not yet dealt with
 
 // random numbers for the game itself, kept apart from rand() so that two linked Gameboys
 // can be given the same seed and make the same random choices
 u32 gameRandSeed;
+
+// everything that makes up a single player game, to save it and continue later
+// (change the layout of any of this and old saves are ignored, their size won't match)
+const struct SaveBlock saveBlocks[] = {
+    { area, sizeof(area) },
+    { bombVal, sizeof(bombVal) },
+    { bombOwner, sizeof(bombOwner) },
+    { &player[0], sizeof(player[0]) },
+    { robot, sizeof(robot) },
+    { &numRobots, sizeof(numRobots) },
+    { &totalRobots, sizeof(totalRobots) },
+    { &robotsHalt, sizeof(robotsHalt) },
+    { &robotsHaltCount, sizeof(robotsHaltCount) },
+    { &rubbleCount, sizeof(rubbleCount) },
+    { &universalTimer, sizeof(universalTimer) },
+    { &timeOfDeath, sizeof(timeOfDeath) },
+    { &nuked, sizeof(nuked) },
+    { &level, sizeof(level) },
+    { &startLevel, sizeof(startLevel) },
+    { &score, sizeof(score) },
+    { &playerHasContinued, sizeof(playerHasContinued) },
+    { &gameRandSeed, sizeof(gameRandSeed) },
+    { &robotMoveSeed, sizeof(robotMoveSeed) },
+    { &mysteryTokenSeed, sizeof(mysteryTokenSeed) },
+    { NULL, 0 }
+};
 
 int gameRand(void)
 {
@@ -1157,6 +1185,8 @@ u8 allInputs(void)
     return input;
 }
 
+void saveAndQuit(void);
+
 // handle when player has pressed pause button
 void pauseActivated()
 {
@@ -1215,9 +1245,12 @@ void pauseActivated()
         
     } // end palette change
     
-    // display message            
+    // display message (and in a single player game with somewhere to save it, how to)
+    bool canSave = !linked && canSaveGames();
     u32 spriteNum = OAM_LETTERS;
-    writeText(-1, 72, "PAUSED", &spriteNum);
+    writeText(-1, canSave ? 60 : 72, "PAUSED", &spriteNum);
+    if(canSave)
+        writeText(-1, 90, "SELECT: SAVE AND QUIT", &spriteNum);
     
     copyAllOAM();
     
@@ -1237,6 +1270,12 @@ void pauseActivated()
         else
         {
             startHeld = KEY_DOWN( KEYSTART );
+            
+            if( canSave && KEY_DOWN( KEYSELECT ) )
+            {
+                saveAndQuit();
+                return;
+            }
         }
         
         // stage 1 waits for a press, stages 0 and 2 for a release
@@ -1250,9 +1289,7 @@ void pauseActivated()
     }
     
     // remove the pause banner
-    int letCount;
-    for(letCount = 0; letCount<6; letCount++)
-        turnOffSprite(OAM_LETTERS + letCount);
+    turnOffSprites(OAM_LETTERS, spriteNum);
     copyAllOAM();
     
     // restore palettes (use irrespective of whether grey scaled or dimmed colours)
@@ -2238,6 +2275,8 @@ void initialisePlayer(struct Player* p, s16 tileX, s16 tileY, u16 sprite)
     p->frame = 0;
 }
 
+void showLevel(void);
+
 // called at start of new level to generate level etc
 void initialiseLevel(void)
 {
@@ -2251,6 +2290,25 @@ void initialiseLevel(void)
     initialisePlayer(&player[2], AREA_X-1, 0, S_G_MAN_LEFT);
     initialisePlayer(&player[3], 0, AREA_Y-1, S_G_MAN_RIGHT);
     
+    generateLevel();
+    
+    // set all tiles bomb counters to be 0
+    int x,y;
+    for(x=0; x<AREA_X; x++)
+    {
+        for(y=0; y<AREA_Y; y++)
+        {
+            bombVal[x][y] = 0;
+            bombOwner[x][y] = 0;
+        }
+    }
+    
+    showLevel();
+}
+
+// load the graphics and show the level as it stands (new, or a saved game being continued)
+void showLevel(void)
+{
     updateBackgroundOffset();
     
     u16 i;
@@ -2270,25 +2328,21 @@ void initialiseLevel(void)
     // load sprite tile data
     unLZ77Vram(sprites_lz, OAMdata);
     
-    generateLevel();
-    
-    // set all tiles bomb counters to be 0
+    // draw the board
     int x,y;
     for(x=0; x<AREA_X; x++)
-    {
         for(y=0; y<AREA_Y; y++)
-        {
-            bombVal[x][y] = 0;
-            bombOwner[x][y] = 0;
-        }
-    }
+            drawObject(x, y, area[x][y]);
     
     // draw men
     drawPlayers();
         
-    // draw robot sprites
+    // draw robot sprites (dying ones are drawn by moveRobots())
     for(i=0; i<totalRobots; i++)
     {
+        if(robot[i].dead != ALIVE)
+            continue;
+        
         u8 y = robot[i].y - yOffset;
         s16 x = robot[i].x - xOffset;
         
@@ -2297,7 +2351,7 @@ void initialiseLevel(void)
         if( x < 0 )
             x = 512 + x;
         
-        drawSprite(OAM_ROBOTS + i, S_ROBOT_RIGHT + robot[i].direction, x, y);
+        drawSprite(OAM_ROBOTS + i, S_ROBOT_RIGHT + (robot[i].direction * 8), x, y);
     }    
     
     // set background to be at correct position    
@@ -3238,7 +3292,7 @@ void gameLoop(void)
         {
             // stays in this function until unpaused
             pauseActivated();
-            if(linkLost)
+            if(linkLost || quitToMenu)
                 return;
         }
         
@@ -3340,12 +3394,31 @@ void displayText()
 
 
 
-void startGameAndManageContinues()
+// from the pause screen: save the game to continue later, then back to the menu
+void saveAndQuit(void)
+{
+    saveGame(saveBlocks);
+    
+    turnOffAllSprites();
+    u32 spriteNum = OAM_LETTERS;
+    writeText(-1, 72, "GAME SAVED", &spriteNum);
+    copyAllOAM();
+    delay(90);
+    
+    fadeToBlack();
+    turnOffAllSprites();
+    copyAllOAM();
+    quitToMenu = TRUE;
+}
+
+// play a single player game, new or continuing the saved one
+void startGameAndManageContinues(bool continueSaved)
 {
     
     linked = FALSE;
     localPlayer = 0;
     gameRandSeed = rand();
+    quitToMenu = FALSE;
     
     rubbleCount = 0;
     initialiseGame();
@@ -3353,6 +3426,16 @@ void startGameAndManageContinues()
     player[0].inGame = TRUE;
     for(i=1; i<MAX_PLAYERS; i++)
         player[i].inGame = FALSE;
+    
+    if(continueSaved)
+    {
+        if( !loadGame(saveBlocks) )
+            return;
+        // a save's continued once, to save again pause the game
+        eraseSavedGame();
+        player[0].streamFrame = NULL;
+        showLevel();
+    }
 
     u32 spriteNum = OAM_LETTERS;
     
@@ -3457,6 +3540,10 @@ void startGameAndManageContinues()
         
         // enter main game loop
         gameLoop();
+        
+        // saved to continue later
+        if(quitToMenu)
+            return;
         
         
     }
@@ -3716,6 +3803,9 @@ void linkGame(void)
     localPlayer = 0;
 }
 
+// title menu options
+enum { MENU_CONTINUE, MENU_START, MENU_DEEP_END, MENU_INSTRUCTIONS, MENU_LINK };
+
 int main(void)
 {
     
@@ -3818,31 +3908,42 @@ int main(void)
             
             displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
             
-            const int numberOfOptions = 4;
+            // the options, with continuing a saved game first if there is one
+            static const char* const menuText[] = {
+                "CONTINUE SAVED GAME", "START GAME", "IN AT THE DEEP END", "INSTRUCTIONS", "2-4 PLAYER LINK"
+            };
+            int options[5];
+            int numberOfOptions = 0;
+            if( savedGameExists(saveBlocks) )
+                options[numberOfOptions++] = MENU_CONTINUE;
+            options[numberOfOptions++] = MENU_START;
+            options[numberOfOptions++] = MENU_DEEP_END;
+            options[numberOfOptions++] = MENU_INSTRUCTIONS;
+            options[numberOfOptions++] = MENU_LINK;
 
+            // first sprite of each option's text, and one past the last
+            u32 firstSprite[6];
             u32 spriteNum = OAM_LETTERS;
-            writeText(-1, 40, "START GAME", &spriteNum);
-            u32 firstSpriteOfDeepEnd = spriteNum;
-            writeText(-1, 60, "IN AT THE DEEP END", &spriteNum);
-            u32 firstSpriteOfInstructions = spriteNum;
-            writeText(-1, 80, "INSTRUCTIONS", &spriteNum);
-            u32 firstSpriteOfMultiplayer = spriteNum;
-            writeText(-1, 100, "2-4 PLAYER LINK", &spriteNum);
+            int top = numberOfOptions > 4 ? 30 : 40;
+            for(i=0; i<numberOfOptions; i++)
+            {
+                firstSprite[i] = spriteNum;
+                writeText(-1, top + i * 20, menuText[ options[i] ], &spriteNum);
+            }
+            firstSprite[numberOfOptions] = spriteNum;
             
             // cycle the brightness of selected letters
             // for brightness adjust the sprites appear to have to be in semi-transparent mode
             
-            // initialise the start game option to be the fading one
+            // initialise the first option to be the fading one
             
             int direction = 1;
             int fadeValue = 0;
                         
             BrightnessInit();
             
-            BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd - 1);
-            BrightnessSetSpritesInactive(firstSpriteOfDeepEnd, firstSpriteOfInstructions - 1);
-            BrightnessSetSpritesInactive(firstSpriteOfInstructions, firstSpriteOfMultiplayer - 1);
-            BrightnessSetSpritesInactive(firstSpriteOfMultiplayer, spriteNum - 1);
+            BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum - 1);
+            BrightnessSetSpritesActive(firstSprite[0], firstSprite[1] - 1);
             
             // flags whether the last button press detected has been released (to force discrete button
             // press and not have to time for auto-repeat)
@@ -3910,13 +4011,7 @@ int main(void)
                     BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum-1);
 
                     // turn on selected entry                
-                    switch(selected)
-                    {
-                        case 0 : BrightnessSetSpritesActive(OAM_LETTERS, firstSpriteOfDeepEnd-1); break;
-                        case 1 : BrightnessSetSpritesActive(firstSpriteOfDeepEnd, firstSpriteOfInstructions-1); break;
-                        case 2 : BrightnessSetSpritesActive(firstSpriteOfInstructions, firstSpriteOfMultiplayer-1); break;
-                        case 3 : BrightnessSetSpritesActive(firstSpriteOfMultiplayer, spriteNum-1); break;
-                    }
+                    BrightnessSetSpritesActive(firstSprite[selected], firstSprite[selected + 1] - 1);
                     
                     dirKeyPressed = 0;
                     
@@ -3950,19 +4045,22 @@ int main(void)
             
             // load sprite palette
             for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
+            
+            selected = options[selected];
 
         } // end of menu system, now act on it...
         else
         {
-            selected = 1; // in at the deep end for development mode
+            selected = MENU_DEEP_END; // in at the deep end for development mode
         }
 
         switch(selected)
         {
-            case 0: startLevel = 0; startGameAndManageContinues(); break;
-            case 1: startLevel = 7; startGameAndManageContinues(); break;
-            case 2: displayStory(); break;
-            case 3: linkGame(); break;
+            case MENU_CONTINUE: startGameAndManageContinues(TRUE); break;
+            case MENU_START: startLevel = 0; startGameAndManageContinues(FALSE); break;
+            case MENU_DEEP_END: startLevel = 7; startGameAndManageContinues(FALSE); break;
+            case MENU_INSTRUCTIONS: displayStory(); break;
+            case MENU_LINK: linkGame(); break;
         }
         
     }

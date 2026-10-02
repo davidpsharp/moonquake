@@ -13,6 +13,12 @@ Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
 
 [Homepage](https://davidsharp.com/gba/)
 
+## saving a game
+In a single player game, pause with START and press SELECT to save and go back to the title
+menu. CONTINUE SAVED GAME then carries on from exactly where you were; the save's used up when
+you continue, so to stop again pause and save again. It's kept in the cartridge's battery backed
+SRAM (a Game Boy that was sent the game by multiboot has nowhere to save).
+
 ## 2-4 player link game
 Connect up to four Game Boy Advances with link cables and choose **2-4 PLAYER LINK** on each. The
 Game Boy with the small purple plug in is player 1 (green): it shows who's connected and starts the
