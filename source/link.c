@@ -76,6 +76,7 @@ static volatile u16 receivedWord[LINK_MAX_PLAYERS];
 static volatile u16 lastGameWord[LINK_MAX_PLAYERS];     // not overwritten when a slot empties
 static volatile u32 emptySince[LINK_MAX_PLAYERS];       // when a slot emptied, 0 if it isn't
 static volatile u8 slot;
+static volatile s8 transferId = -1;     // player number from the last good transfer, -1 none yet
 static volatile u8 masterRepeats;       // transfers in a row the master's word hasn't changed
 static volatile u32 transfers;          // count of good transfers, to spot the cable being pulled
 static volatile u32 failedTransfers;    // and of ones with the error flag set (for diagnostics)
@@ -91,8 +92,15 @@ static u8 frame;                        // frame number modulo 4
 static u8 previousInput;
 
 
+// The master's SI pin is grounded by the cable, the others' is driven by the Gameboy before
+// them on it and on real hardware reads low during transfers too (mGBA keeps it high), so SI is
+// only a safe guide before there's been a transfer. After one, the player number the hardware
+// gives each Gameboy (0 for the master) is.
 static bool isMaster(void)
 {
+    s8 id = transferId;
+    if( id >= 0 )
+        return 0 == id;
     return !(REG_SIOCNT & SIO_SI_HIGH);
 }
 
@@ -126,11 +134,12 @@ void linkOnSerial(void)
             emptySince[i] = vblanks | 1;
     }
     slot = (cnt >> SIO_ID_SHIFT) & 3;
+    transferId = slot;
     transfers++;
 
     // a slave's word must be in place before the master starts the next transfer,
     // it's done here as there's a guaranteed gap after each transfer
-    if( cnt & SIO_SI_HIGH )
+    if( !isMaster() )
     {
         u16 word = sendWord;
         // If waiting while the master's doing something else, it's sending the game to other
@@ -169,6 +178,8 @@ void linkStart(void)
     // still running (see linkStop()), leave the hardware be so as not to upset a transfer
     if( linkActive )
         return;
+
+    transferId = -1;
 
     REG_RCNT = R_MULTI;
     REG_SIOMLT_SEND = sendWord;     // before multiplayer mode so 0 is never sent, see WORD_BIOS_WAITING

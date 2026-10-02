@@ -7,12 +7,14 @@
 here=$(cd "$(dirname "$0")" && pwd)
 bios=${1:-$HOME/gba/gba_bios.bin}
 seeds="--seed 0:5 --seed 1:6 --seed 2:7 --seed 3:8"
+# as on real hardware, the other Gameboys' SI pin reads low at times
+flicker="--si-flicker"
 failed=0
 
 run() {
     name=$1
     shift
-    output=$("$here/run.sh" $seeds --frames 60000 --trace dropped "$@" 2>&1)
+    output=$("$here/run.sh" $seeds $flicker --frames 60000 --trace dropped "$@" 2>&1)
     result=$(echo "$output" | grep -E 'IN SYNC|DESYNC|NOTHING|crashed')
     # unless someone's being unplugged, no one should be dropped from the game
     case "$*" in

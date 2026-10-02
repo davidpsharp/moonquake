@@ -15,6 +15,7 @@
 #include <mgba/core/thread.h>
 #include <mgba/gba/core.h>
 #include <mgba/internal/gba/gba.h>
+#include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 #include <mgba-util/vfs.h>
 
@@ -132,6 +133,7 @@ static const char* traceName[4];
 static int numTraces;
 static const char* shotDir;
 static volatile int stop;
+static int siFlicker;   // make the other Gameboys' SI bit read low at random, as on real hardware
 struct Poke {
 	int gba, frame;
 	uint32_t addr, value;
@@ -320,6 +322,17 @@ static void frameCallback(struct mCoreThread* thread) {
 	struct Gba* g = thread->userData;
 	struct mCore* core = g->core;
 	int frame = g->frames++;
+
+	// On real hardware a Gameboy that isn't player 1 reads its SI pin low during transfers
+	// (player 1 starts one about every millisecond), mGBA keeps it high: flip it at random.
+	// (Not before a Gameboy with no cartridge has the game: its BIOS reads SI too, and this
+	// flips it when idle, which real hardware doesn't.)
+	if (siFlicker && g->id > 0 && !(g->noCart && !g->gameLoaded)) {
+		struct GBA* board = core->board;
+		uint16_t si = (botRand(g) & 1) ? 4 : 0;
+		board->sio.siocnt = (board->sio.siocnt & ~4) | si;
+		board->memory.io[REG_SIOCNT >> 1] = (board->memory.io[REG_SIOCNT >> 1] & ~4) | si;
+	}
 
 	for (int i = 0; i < numPokes; ++i) {
 		if (pokes[i].gba == g->id && pokes[i].frame == frame) {
@@ -524,6 +537,8 @@ static void usage(void) {
 	        "  --gbas N               number of Gameboys, 2-4 (default 2)\n"
 	        "  --cart GBA:FILE|none   ROM for one Gameboy (default the same, none = no cartridge,\n"
 	        "                         boot the BIOS to wait for multiboot)\n"
+	        "  --si-flicker           make the other Gameboys' SI bit read low at random, as on real\n"
+	        "                         hardware during transfers\n"
 	        "  --lobby N              GBA 0 presses start in the lobby once N players are waiting\n"
 	        "                         (needs --info receivedWord=...)\n"
 	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
@@ -614,6 +629,8 @@ int main(int argc, char** argv) {
 			}
 			gba[n].audio = fopen(file, "wb");
 			++i;
+		} else if (!strcmp(a, "--si-flicker")) {
+			siFlicker = 1;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
 		} else if (!strcmp(a, "--sym") && v && numSyms < MAX_SYMS) {
