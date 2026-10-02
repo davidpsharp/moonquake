@@ -30,6 +30,7 @@
 
 #define KEY_A       (1 << 0)
 #define KEY_B       (1 << 1)
+#define KEY_SELECT  (1 << 2)
 #define KEY_START   (1 << 3)
 #define KEY_RIGHT   (1 << 4)
 #define KEY_LEFT    (1 << 5)
@@ -69,6 +70,10 @@ struct Gba {
 	int pauseAt;            // game frame to press start at, 0 for never
 	int pauseStep;
 	int lobbyPress;
+	int leave;              // tap select during the game, so leave once out
+	int unplugWhenOut;      // pull the cable out once out of the game
+	volatile int unplugRequested;
+	int unplugged;
 	int resetAt;            // video frame to reset this Gameboy at (as if switched off), 0 for never
 
 	int frames;
@@ -103,6 +108,10 @@ static const char* traceName[4];
 static int numTraces;
 static const char* shotDir;
 static volatile int stop;
+static uint32_t symPlayer;
+#define PLAYER_SIZE 48          // sizeof(struct Player) in the game
+#define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
+#define LIFE_OUT 3
 
 static uint32_t symAddr(const char* name) {
 	for (int i = 0; i < numSyms; ++i) {
@@ -368,6 +377,13 @@ static void frameCallback(struct mCoreThread* thread) {
 			g->botHold = 8 + botRand(g) % 24;
 		}
 		keys |= g->botKeys;
+		if (g->leave && (frame / 8) % 4 == 0) {
+			keys = KEY_SELECT;
+		}
+	}
+	if (g->unplugWhenOut && !g->unplugged && inGame &&
+	    core->busRead8(core, symPlayer + g->id * PLAYER_SIZE + PLAYER_LIFE_STATUS) == LIFE_OUT) {
+		g->unplugRequested = 1;
 	}
 	if (g->pauseAt && inGame && !matchOver && timer >= g->pauseAt && g->pauseStep < 130) {
 		// press start, wait two seconds, press start again
@@ -395,6 +411,8 @@ static void usage(void) {
 	        "  --lobby N              GBA 0 presses start in the lobby once N players are waiting\n"
 	        "                         (needs --info receivedWord=...)\n"
 	        "  --info NAME=ADDR:SIZE  a symbol to read but not compare\n"
+	        "  --leave GBA            tap select in the game, so leave once out of it\n"
+	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
 	        "  --sym NAME=ADDR:SIZE   game state to compare (also needs universalTimer, frameDone,\n"
 	        "                         linked, matchOver)\n"
 	        "  --keys GBA:FRAME:KEYS:LEN   scripted input (KEYS as a GBA key mask)\n"
@@ -438,6 +456,12 @@ int main(int argc, char** argv) {
 			if (sscanf(v, "%47[^=]=%x:%x", s->name, &s->addr, &s->size) != 3) {
 				usage();
 			}
+			++i;
+		} else if (!strcmp(a, "--leave") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].leave = 1;
+			++i;
+		} else if (!strcmp(a, "--unplug-out") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].unplugWhenOut = 1;
 			++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
@@ -495,6 +519,7 @@ int main(int argc, char** argv) {
 	symFrameDone = symAddr("frameDone");
 	symTimer = symAddr("universalTimer");
 	symLinked = symAddr("linked");
+	symPlayer = symAddr("player");
 	symMatchOver = symAddr("matchOver");
 	if (!symFrameDone || !symTimer || !symLinked || !symMatchOver) {
 		fprintf(stderr, "need --sym for frameDone, universalTimer, linked and matchOver\n");
@@ -571,6 +596,22 @@ int main(int argc, char** argv) {
 	while (!stop) {
 		usleep(10000);
 		for (int i = 0; i < numGbas; ++i) {
+			if (gba[i].unplugRequested && !gba[i].unplugged) {
+				// as mGBA's Qt frontend does: stop every Gameboy, take this one off the cable
+				for (int j = 0; j < numGbas; ++j) {
+					mCoreThreadInterrupt(&gba[j].thread);
+				}
+				GBASIOLockstepDetachNode(&lockstep, &gba[i].node);
+				struct GBA* board = gba[i].core->board;
+				GBASIOSetDriver(&board->sio, NULL, SIO_MULTI);
+				gba[i].unplugged = 1;
+				for (int j = 0; j < numGbas; ++j) {
+					mCoreThreadContinue(&gba[j].thread);
+				}
+				printf("gba%d: unplugged at frame %d\n", i, gba[i].frames);
+			}
+		}
+		for (int i = 0; i < numGbas; ++i) {
 			if (mCoreThreadHasCrashed(&gba[i].thread)) {
 				fprintf(stderr, "gba%d crashed\n", i);
 				stop = 1;
@@ -601,22 +642,28 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// compare the games frame by frame, against GBA 0
-	int compared = 0, notAll = 0, firstBad = -1, badGba = 0;
+	// compare the games frame by frame, between the Gameboys that got to each frame (one might
+	// have left)
+	int compared = 0, notAll = 0, firstBad = -1, badA = 0, badB = 0;
 	for (int t = 0; t < 65536; ++t) {
-		int seenBy = 0;
+		int first = -1, seenBy = 0;
 		for (int i = 0; i < numGbas; ++i) {
-			seenBy += gba[i].seen[t];
-		}
-		if (seenBy == numGbas) {
-			++compared;
-			for (int i = 1; i < numGbas && firstBad < 0; ++i) {
-				if (gba[0].hashes[t * (numSyms + 1)] != gba[i].hashes[t * (numSyms + 1)]) {
-					firstBad = t;
-					badGba = i;
-				}
+			if (!gba[i].seen[t]) {
+				continue;
 			}
-		} else if (seenBy) {
+			++seenBy;
+			if (first < 0) {
+				first = i;
+			} else if (firstBad < 0 && gba[first].hashes[t * (numSyms + 1)] != gba[i].hashes[t * (numSyms + 1)]) {
+				firstBad = t;
+				badA = first;
+				badB = i;
+			}
+		}
+		if (seenBy > 1) {
+			++compared;
+		}
+		if (seenBy && seenBy < numGbas) {
 			++notAll;
 		}
 	}
@@ -628,9 +675,9 @@ int main(int argc, char** argv) {
 	}
 	printf("compared %d game frames (%d not seen by all)\n", compared, notAll);
 	if (firstBad >= 0) {
-		printf("DESYNC at game frame %d between gba0 and gba%d in:", firstBad, badGba);
+		printf("DESYNC at game frame %d between gba%d and gba%d in:", firstBad, badA, badB);
 		for (int i = 0; i < numSyms; ++i) {
-			if (gba[0].hashes[firstBad * (numSyms + 1) + i + 1] != gba[badGba].hashes[firstBad * (numSyms + 1) + i + 1]) {
+			if (gba[badA].hashes[firstBad * (numSyms + 1) + i + 1] != gba[badB].hashes[firstBad * (numSyms + 1) + i + 1]) {
 				printf(" %s", syms[i].name);
 			}
 		}

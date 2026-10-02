@@ -1,6 +1,7 @@
 #!/bin/sh
 # Run all the linked game tests: 2-4 Gameboys with cartridges, sending the game by multiboot
-# to Gameboys without, pausing, and a Gameboy being switched off mid-game.
+# to Gameboys without, pausing, a Gameboy being switched off mid-game, and players who are out
+# of the game leaving or being unplugged.
 #
 #   tools/linktest/all.sh [path to GBA BIOS, needed for the multiboot tests]
 here=$(cd "$(dirname "$0")" && pwd)
@@ -24,6 +25,8 @@ run "3 players" --gbas 3
 run "4 players" --gbas 4
 run "4 players, pause" --gbas 4 --pause 2:400
 run "4 players, one switched off" --gbas 4 --reset 3:1500 --frames 2000
+run "4 players, out players leave" --gbas 4 --leave 1 --leave 2 --leave 3
+run "4 players, out player unplugged" --gbas 4 --unplug-out 3 --seed 0:25 --seed 1:26 --seed 2:27 --seed 3:28
 if [ -f "$bios" ]; then
     run "2 players, multiboot" --gbas 2 --bios "$bios" --cart 1:none
     run "4 players, multiboot to 3" --gbas 4 --bios "$bios" --cart 1:none --cart 2:none --cart 3:none

@@ -359,6 +359,7 @@ mm_sound_effect arg = {
 
 bool linkLost;      // set when the other Gameboy stops answering in a linked game
 bool matchOver;     // set when a linked game has been won
+bool leftGame;      // set when this Gameboy's player, out of the game, chose to leave
 
 // random numbers for the game itself, kept apart from rand() so that two linked Gameboys
 // can be given the same seed and make the same random choices
@@ -1121,10 +1122,12 @@ bool readInputs(void)
             return FALSE;
         }
         
+        // players out of the game have no say in it, then if their Gameboy leaves the
+        // game's the same whenever the others notice (see linkPlayerOut())
         int i;
         for(i=0; i<MAX_PLAYERS; i++)
             if(player[i].inGame)
-                player[i].input = inputs[i];
+                player[i].input = (player[i].lifeStatus == OUT) ? 0 : inputs[i];
     }
     
     return TRUE;
@@ -2814,6 +2817,7 @@ int handleLinkedDeaths(void)
     int numInGame = 0;
     int numDead = 0;
     int lastDead = 0;
+    bool localWentOut = FALSE;
     for(i=0; i<MAX_PLAYERS; i++)
     {
         struct Player* p = &player[i];
@@ -2827,7 +2831,12 @@ int handleLinkedDeaths(void)
             numDead++;
             lastDead = i;
             if(p->lives < 0)
+            {
                 p->lifeStatus = OUT;
+                linkPlayerOut(i);
+                if(i == localPlayer)
+                    localWentOut = TRUE;
+            }
         }
     }
     
@@ -2917,6 +2926,13 @@ int handleLinkedDeaths(void)
                 strcat(line2, lives);
             }
         }
+    }
+    // and if this Gameboy's player has just gone out, how to leave
+    if(localWentOut)
+    {
+        strcpy(line1, "YOU'RE OUT");
+        // (player 1's Gameboy runs the link so can't leave)
+        strcpy(line2, linkIsMaster() ? "BUT KEEP WATCHING" : "SELECT LEAVES GAME");
     }
     showGameBanner(line1, line2);
     
@@ -3150,7 +3166,18 @@ void gameLoop(void)
         if(!robotsHalt)
             robotAI();
         
-        // check for keypresses, from both Gameboys in a linked game
+        // a player out of a linked game can leave it (except player 1, whose Gameboy runs the link)
+        if( linked && player[localPlayer].lifeStatus == OUT && !linkIsMaster() && KEY_DOWN( KEYSELECT ) )
+        {
+            linkLeave();
+            leftGame = TRUE;
+            fadeToBlack();
+            turnOffAllSprites();
+            copyAllOAM();
+            return;
+        }
+        
+        // check for keypresses, from all the Gameboys in a linked game
         if( !readInputs() )
             return;
         
@@ -3533,6 +3560,7 @@ void linkGame(void)
         player[i].inGame = (playing >> i) & 1;
     linkLost = FALSE;
     matchOver = FALSE;
+    leftGame = FALSE;
     
     // agree a random seed for the game, made up from all the Gameboys' random numbers
     u32 seed = 0;
@@ -3592,11 +3620,25 @@ void linkGame(void)
         
         gameLoop();
         
-        if(matchOver)
+        if(matchOver || leftGame)
             break;
         
         // level completed so on to the next, going round again after the last
         level = (level + 1) % NUM_LEVELS;
+    }
+    
+    if(leftGame)
+    {
+        for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
+        u32 spriteNum = OAM_LETTERS;
+        writeText(-1, 50, "YOU'VE LEFT THE GAME", &spriteNum);
+        writeText(-1, 80, "YOU CAN UNPLUG", &spriteNum);
+        writeText(-1, 100, "THE CABLE NOW", &spriteNum);
+        copyAllOAM();
+        delayOrKeypress(180);
+        fadeToBlack();
+        turnOffAllSprites();
+        copyAllOAM();
     }
     
     if(linkLost)

@@ -33,7 +33,7 @@ void linkOnVBlank(void);
 
 // enter multiplayer serial mode and tell the other Gameboys we're waiting to play
 void linkStart(void);
-// leave multiplayer serial mode
+// leave multiplayer serial mode (a slave keeps answering, as an empty slot, see link.c)
 void linkStop(void);
 
 // this Gameboy's slot, only right once there's been a transfer
@@ -57,5 +57,11 @@ u8 linkGameStarted(void);
 int linkExchange(u8 input, u8* inputs);
 // end the game on all the Gameboys at the same frame, goes back to waiting
 void linkEndGame(void);
+
+// call on every Gameboy at the same frame when a player's out of the game: from then on their
+// input isn't needed, so if their Gameboy leaves or is unplugged the others carry on
+void linkPlayerOut(int slot);
+// leave the game (this Gameboy's player is out) and stop the link
+void linkLeave(void);
 
 #endif

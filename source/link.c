@@ -56,6 +56,7 @@
 // how long without hearing from another Gameboy before giving up, in vblanks
 #define NO_TRANSFERS_TIMEOUT    60      // cable pulled out or a Gameboy switched off
 #define NO_PROGRESS_TIMEOUT     (60*10) // a Gameboy stopped playing
+#define OUT_PLAYER_TIMEOUT      (60*5)  // a Gameboy whose player is out of the game stopped
 
 static volatile u16 sendWord = WORD_WAITING;
 static volatile u16 receivedWord[LINK_MAX_PLAYERS];
@@ -66,6 +67,7 @@ static volatile u32 vblanks;
 static bool linkActive;
 
 static u8 playing;                      // slots in the game
+static u8 outOfGame;                    // slots whose players are out, their input isn't needed
 static u8 frame;                        // frame number modulo 4
 static u8 previousInput;
 
@@ -133,6 +135,10 @@ void linkStart(void)
     sendWord = WORD_WAITING;
     playing = 0;
 
+    // still running (see linkStop()), leave the hardware be so as not to upset a transfer
+    if( linkActive )
+        return;
+
     REG_RCNT = R_MULTI;
     REG_SIOMLT_SEND = sendWord;     // before multiplayer mode so 0 is never sent, see WORD_BIOS_WAITING
     REG_SIOCNT = SIO_MULTI | SIO_115200 | SIO_IRQ;
@@ -149,6 +155,17 @@ void linkStop(void)
 {
     if( !linkActive )
         return;
+
+    // A slave that leaves multiplayer mode while still plugged in stops all the transfers,
+    // spoiling any game the others are playing, so it stays answering but as an empty slot
+    // would, until it's unplugged or starts linking again. (Only the master really stops,
+    // no one can play without it anyway.)
+    if( !isMaster() )
+    {
+        sendWord = WORD_NONE;
+        playing = 0;
+        return;
+    }
 
     irqDisable(IRQ_SERIAL | IRQ_TIMER3);
     REG_TM3CNT_H = 0;
@@ -189,6 +206,7 @@ bool linkMultibootWaiting(void)
 static void beginGame(u8 mask)
 {
     playing = mask;
+    outOfGame = 0;
     frame = 0;
     previousInput = 0;
 }
@@ -260,6 +278,13 @@ static int waitForFrame(bool finishing, u8* inputs)
                 inputs[i] = WORD_PREV_INPUT(word);
             else if( finishing && word == WORD_WAITING )
                 inputs[i] = 0;
+            else if( (outOfGame & (1 << i)) && (!WORD_IS_GAME(word) || vblanks - startTime > OUT_PLAYER_TIMEOUT) )
+            {
+                // A player who's out has left, or been unplugged: stop waiting for that
+                // Gameboy. No need for the others to agree when, its input isn't used.
+                playing &= ~(1 << i);
+                inputs[i] = 0;
+            }
             else
                 haveAll = FALSE;    // still on the frame before (or the master's still starting)
         }
@@ -277,6 +302,17 @@ static int waitForFrame(bool finishing, u8* inputs)
         // sleep until the next interrupt
         Halt();
     }
+}
+
+void linkPlayerOut(int slot)
+{
+    outOfGame |= 1 << slot;
+}
+
+void linkLeave(void)
+{
+    // looks to the others as though this Gameboy's been unplugged
+    linkStop();
 }
 
 int linkExchange(u8 input, u8* inputs)
