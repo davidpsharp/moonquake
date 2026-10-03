@@ -80,6 +80,7 @@ static volatile s8 transferId = -1;     // player number from the last good tran
 static volatile u8 masterRepeats;       // transfers in a row the master's word hasn't changed
 static volatile u32 transfers;          // count of good transfers, to spot the cable being pulled
 static volatile u32 failedTransfers;    // and of ones with the error flag set (for diagnostics)
+static volatile u32 stuckTransfers;     // and of ones that never finished
 static volatile u32 vblanks;
 static bool linkActive;
 
@@ -153,10 +154,31 @@ void linkOnSerial(void)
     }
 }
 
+// timer ticks (about 1ms each) a transfer can be under way before it's taken to be stuck
+#define STUCK_TICKS     20
+
 void linkOnTimer(void)
 {
+    static u8 busyTicks;
     u16 cnt = REG_SIOCNT;
-    if( isMaster() && (cnt & SIO_ALL_READY) && !(cnt & SIO_MULTI_BUSY) )
+    if( !isMaster() )
+        return;
+
+    // A transfer takes well under a millisecond. One that never finishes (seen with an
+    // Analogue Pocket as the master) would stop all the others, so start afresh.
+    if( cnt & SIO_MULTI_BUSY )
+    {
+        if( ++busyTicks > STUCK_TICKS )
+        {
+            busyTicks = 0;
+            stuckTransfers++;
+            REG_SIOCNT = SIO_MULTI | SIO_115200 | SIO_IRQ;
+        }
+        return;
+    }
+    busyTicks = 0;
+
+    if( cnt & SIO_ALL_READY )
     {
         REG_SIOMLT_SEND = sendWord;
         REG_SIOCNT = cnt | SIO_MULTI_BUSY;
@@ -247,9 +269,14 @@ bool linkAllReady(void)
     return (REG_SIOCNT & SIO_ALL_READY) != 0;
 }
 
-u32 linkTransfers(bool failed)
+u32 linkTransfers(int which)
 {
-    return failed ? failedTransfers : transfers;
+    switch(which)
+    {
+        case LINK_TRANSFERS_FAILED : return failedTransfers;
+        case LINK_TRANSFERS_STUCK  : return stuckTransfers;
+        default                    : return transfers;
+    }
 }
 
 bool linkMultibootWaiting(void)

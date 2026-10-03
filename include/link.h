@@ -50,8 +50,12 @@ bool linkMultibootWaiting(void);
 // and whether the hardware says every Gameboy on the cable is ready
 u16 linkSlotWord(int slot);
 bool linkAllReady(void);
-// and how many transfers have finished, or failed (the error flag set), since the game started
-u32 linkTransfers(bool failed);
+// and how many transfers have finished, failed (the error flag set), or got stuck (never
+// finished, so the master started again), since the game started
+#define LINK_TRANSFERS_OK       0
+#define LINK_TRANSFERS_FAILED   1
+#define LINK_TRANSFERS_STUCK    2
+u32 linkTransfers(int which);
 
 // master: start a game on the level given (0-15) with the Gameboys in the slots given, returns
 // FALSE if they don't all join in

@@ -3610,7 +3610,7 @@ void showSending(void)
 // letters kept for the level choice on the waiting screen, and the link diagnostics
 #define OAM_LEVEL_CHOICE    68
 #define OAM_DIAGNOSTICS     88
-#define DIAGNOSTICS_LETTERS 26
+#define DIAGNOSTICS_LETTERS 32
 
 // player 1's waiting screen: the level to play on
 void showLevelChoice(u8 level)
@@ -3626,7 +3626,8 @@ void showLevelChoice(u8 level)
 // while L's held on the waiting screen, show what each slot on the cable is sending and
 // whether the hardware says all the Gameboys on it are ready, for checking a link setup:
 // 8001 waiting to play, 0000 the BIOS waiting to be sent the game, FFFF nothing there.
-// Below that, how many transfers have finished and failed (counting up, last 3 digits).
+// Below that, how many transfers have finished, failed and got stuck (counting up, last 3
+// digits; ST only goes up on the master).
 void showLinkDiagnostics(bool show)
 {
     static bool shown;
@@ -3662,15 +3663,18 @@ void showLinkDiagnostics(bool show)
     text[n++] = linkAllReady() ? 'R' : '-';
     text[n] = 0;
     
-    char counts[] = "OK XXX BAD XXX";
-    u32 good = linkTransfers(FALSE) % 1000;
-    u32 bad = linkTransfers(TRUE) % 1000;
+    char counts[] = "OK XXX BAD XXX ST XXX";
+    u32 good = linkTransfers(LINK_TRANSFERS_OK) % 1000;
+    u32 bad = linkTransfers(LINK_TRANSFERS_FAILED) % 1000;
+    u32 stuck = linkTransfers(LINK_TRANSFERS_STUCK) % 1000;
     for(n=0; n<3; n++)
     {
         counts[5 - n] = '0' + good % 10;
         counts[13 - n] = '0' + bad % 10;
+        counts[20 - n] = '0' + stuck % 10;
         good /= 10;
         bad /= 10;
+        stuck /= 10;
     }
     
     turnOffSprites(OAM_DIAGNOSTICS, OAM_DIAGNOSTICS + DIAGNOSTICS_LETTERS);
