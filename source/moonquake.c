@@ -356,7 +356,7 @@ mm_sound_effect explo = {
     SAMPLE_RATE(8219),		// rate
     0,		// handle
     255,	// volume
-    255,	// panning
+    128,	// panning (centre)
 };
 
 mm_sound_effect token = {
@@ -364,7 +364,7 @@ mm_sound_effect token = {
     SAMPLE_RATE(46793),		// rate
     0,		// handle
     255,	// volume
-    255,	// panning
+    128,	// panning (centre)
 };
 
 mm_sound_effect rarg = {
@@ -372,7 +372,7 @@ mm_sound_effect rarg = {
     SAMPLE_RATE(13916),		// rate
     0,		// handle
     255,	// volume
-    255,	// panning
+    128,	// panning (centre)
 };
 
 mm_sound_effect arg = {
@@ -380,8 +380,18 @@ mm_sound_effect arg = {
     SAMPLE_RATE(11393),		// rate
     0,		// handle
     255,	// volume
-    255,	// panning
+    128,	// panning (centre)
 };
+
+// Play a sound effect, cutting off the last one of the same kind if it's still going, as the
+// original did (it gave each kind its own channel), so a chain reaction is one explosion
+// starting again with each bomb rather than several on top of each other
+void playEffect(mm_sound_effect* effect)
+{
+    mmEffectCancel(effect->handle);
+    effect->handle = 0;     // (a new one each time)
+    effect->handle = mmEffectEx(effect);
+}
 
 bool linkLost;      // set when the other Gameboy stops answering in a linked game
 bool matchOver;     // set when a linked game has been won
@@ -1641,7 +1651,7 @@ void buildPlayerColours(void)
 void killMan(struct Player* p)
 {
     //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_ARG);
-    mmEffectEx(&arg);
+    playEffect(&arg);
     
     p->lifeStatus = DYING;
     p->frame = 0;           // set to first frame of dying animation
@@ -1769,7 +1779,7 @@ void detonateBomb(u8 x, u8 y)
     // explosion or just decays improperly?
     
     //SoundFX_Make(SOUNDFX_CHANNEL_A, SOUNDFX_EXPLO);
-    mmEffectEx(&explo);
+    playEffect(&explo);
     
     struct Player* owner = &player[ bombOwner[x][y] ];
     owner->bombsCurrentlyDropped--;
@@ -2141,7 +2151,7 @@ void moveRobots()
                     robot[i].move = FALSE;
                     robot[i].dead = DYING;
                     //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_RARG); 
-                    mmEffectEx(&rarg);
+                    playEffect(&rarg);
                 }
                                 
                 // if robot moving then adjust coords
@@ -3161,7 +3171,7 @@ void collectGift(struct Player* p)
             drawObject(p->x / 16, p->y / 16, T_SPACE);
             
             //SoundFX_Make(SOUNDFX_CHANNEL_B, SOUNDFX_TOKEN);
-            mmEffectEx(&token);
+            playEffect(&token);
             
             switch( giftType )
             {
@@ -4098,7 +4108,7 @@ int chooseStartLevel(void)
         {
             static int effect;
             mm_sound_effect* effects[] = { &explo, &arg, &rarg, &token };
-            mmEffectEx( effects[effect] );
+            playEffect( effects[effect] );
             effect = (effect + 1) % 4;
         }
     }
