@@ -36,6 +36,10 @@ others play on. If someone's Game Boy gets unplugged mid-game they're out and th
 Player 1 has to stay connected: its Game Boy runs the link. Unplug rather than switching off
 while still connected, as a switched-off Game Boy on the cable may stop everyone.
 
+An Analogue Pocket (firmware 1.6, openFPGA or its own GBA mode) can be any player but player 1:
+as the one with the small purple plug in it can't run a link with real Game Boys, for any game
+(Mario Kart: Super Circuit doesn't work that way round either). It can be sent the game.
+
 Only player 1 needs the game. Switch the others on with no cartridge in: player 1 sends them the
 game over the cable (it takes around half a minute for one, longer for three) and they start up
 ready to play. Game Boys with and without cartridges can be mixed.
