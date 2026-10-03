@@ -339,9 +339,16 @@ int startLevel;     // which level game started on (in case different)
 int score;
 bool playerHasContinued;
 
+// The samples are the Acorn original's (maxmod_data/*.wav, 10146Hz), which it played at its own
+// rate each: RISC OS played a voice's sample at (Sound_Pitch(pitch) >> 16) / 256 bytes per
+// output sample at 20833Hz (48us), and the game used pitch &1000 for the explosion, &1780 the
+// man dying, &1C00 a robot dying and &3800 a token, which RISC OS 3.71 gives as 8219Hz,
+// 11393Hz, 13916Hz and 46793Hz. maxmod's rate is in 1/1024ths of the sample's own rate.
+#define SAMPLE_RATE(hz) ((hz) * 1024 / 10146)
+
 mm_sound_effect explo = {
     { SFX_EXPLO } ,			// id
-    (int)(1.0f * (1<<10)),	// rate
+    SAMPLE_RATE(8219),		// rate
     0,		// handle
     255,	// volume
     255,	// panning
@@ -349,7 +356,7 @@ mm_sound_effect explo = {
 
 mm_sound_effect token = {
     { SFX_TOKEN } ,			// id
-    (int)(1.0f * (1<<10)),	// rate
+    SAMPLE_RATE(46793),		// rate
     0,		// handle
     255,	// volume
     255,	// panning
@@ -357,7 +364,7 @@ mm_sound_effect token = {
 
 mm_sound_effect rarg = {
     { SFX_RARG } ,			// id
-    (int)(1.0f * (1<<10)),	// rate
+    SAMPLE_RATE(13916),		// rate
     0,		// handle
     255,	// volume
     255,	// panning
@@ -365,7 +372,7 @@ mm_sound_effect rarg = {
 
 mm_sound_effect arg = {
     { SFX_ARG } ,			// id
-    (int)(1.0f * (1<<10)),	// rate
+    SAMPLE_RATE(11393),		// rate
     0,		// handle
     255,	// volume
     255,	// panning
@@ -4025,7 +4032,8 @@ int chooseStartLevel(void)
     u32 spriteNum = OAM_LETTERS;
     writeText(-1, 30, "CHEAT MODE", &spriteNum);
     writeText(-1, 90, "LEFT/RIGHT, A TO START", &spriteNum);
-    writeText(-1, 120, "B TO GO BACK", &spriteNum);
+    writeText(-1, 110, "SELECT: SOUND TEST", &spriteNum);
+    writeText(-1, 130, "B TO GO BACK", &spriteNum);
     u32 levelSprites = spriteNum;
     
     int level = 0;
@@ -4073,6 +4081,15 @@ int chooseStartLevel(void)
             level = ( level + (KEY_DOWN( KEYRIGHT ) ? 1 : NUM_LEVELS - 1) ) % NUM_LEVELS;
             menuBlip();
             redraw = TRUE;
+        }
+        
+        // the sound effects in turn, for checking them
+        if( KEY_DOWN( KEYSELECT ) )
+        {
+            static int effect;
+            mm_sound_effect* effects[] = { &explo, &arg, &rarg, &token };
+            mmEffectEx( effects[effect] );
+            effect = (effect + 1) % 4;
         }
     }
     

@@ -15,7 +15,8 @@ Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
 
 ## cheat for testing
 On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Until the Game Boy's
-switched off, START GAME then asks which level to start on.
+switched off, START GAME then asks which level to start on; SELECT there plays each sound effect in
+turn.
 
 ## saving a game
 In a single player game, pause with START and press SELECT to save and go back to the title
