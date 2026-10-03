@@ -4235,13 +4235,14 @@ int main(void)
                 options[numberOfOptions++] = MENU_CONTINUE;
             options[numberOfOptions++] = MENU_START;
             options[numberOfOptions++] = MENU_DEEP_END;
-            options[numberOfOptions++] = MENU_INSTRUCTIONS;
+            int linkOption = numberOfOptions;
             options[numberOfOptions++] = MENU_LINK;
+            options[numberOfOptions++] = MENU_INSTRUCTIONS;
             
             // after a linked game, start with 2-4 PLAYER LINK highlighted so everyone can just
             // press it again for another game
             if(lastPlayedLinked)
-                selected = numberOfOptions - 1;
+                selected = linkOption;
 
             // first sprite of each option's text, and one past the last
             u32 firstSprite[6];

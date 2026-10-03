@@ -44,10 +44,11 @@ syms="$syms --info receivedWord=$line"
 line=$("$DEVKITARM/bin/arm-none-eabi-nm" -S "$ELF" | awk '$4 == "dropped" { print $1 ":" $2 }')
 syms="$syms --info dropped=$line"
 
-# skip the credits, then on each Gameboy: up (to 2-4 PLAYER LINK, the last option), A
+# skip the credits, then on each Gameboy: up twice (round to INSTRUCTIONS, the last option, then
+# 2-4 PLAYER LINK), A
 script=""
 for g in 0 1 2 3; do
-    script="$script --keys $g:200:1:4 --keys $g:$((420 + g * 10)):64:4 --keys $g:$((460 + g * 20)):1:4"
+    script="$script --keys $g:200:1:4 --keys $g:$((420 + g * 10)):64:4 --keys $g:$((437 + g * 10)):64:4 --keys $g:$((460 + g * 20)):1:4"
 done
 
 exec "$here/linktest" $syms $script "$@" "$ROM"
