@@ -395,7 +395,7 @@ void playEffect(mm_sound_effect* effect)
 
 bool linkLost;      // set when the other Gameboy stops answering in a linked game
 bool matchOver;     // set when a linked game has been won
-bool leftGame;      // set when this Gameboy's player, out of the game, chose to leave
+bool leftGame;      // set when this Gameboy's player chose to leave (out of the game, or from the pause menu)
 bool quitToMenu;    // set when the player's saved the game from the pause screen to continue later
 u8 playersDropped;  // players whose Gameboys have been unplugged, not yet dealt with
 
@@ -1237,6 +1237,8 @@ u8 allInputs(void)
 
 void saveAndQuit(void);
 void quitGame(int player);
+int handleLinkedDeaths(u8 unplugged);
+u8 playersLeft;     // players who've left the game from the pause menu (for handleLinkedDeaths())
 
 // handle when player has pressed pause button
 void pauseActivated(int pauser)
@@ -1308,7 +1310,18 @@ void pauseActivated(int pauser)
     if(canSave)
         options[numOptions++] = PAUSE_SAVE;
     options[numOptions++] = PAUSE_QUIT;
+    // in a linked game a player leaves on his own and the rest play on, except player 1, whose
+    // Gameboy runs the link, so that ends the game for everyone
     static const char* const optionText[] = { "CONTINUE", "SAVE AND QUIT", "QUIT GAME" };
+    const char* quitText = linked ? "LEAVE GAME" : "QUIT GAME";
+    const char* confirmLines[3];
+    int numConfirmLines = 0;
+    confirmLines[numConfirmLines++] = linked ? "LEAVE THE GAME?" : "QUIT THE GAME?";
+    if(linked && 0 == pauser)
+    {
+        confirmLines[numConfirmLines++] = "IT ENDS THE GAME";
+        confirmLines[numConfirmLines++] = "FOR EVERYONE";
+    }
     
     char title[20];
     if(linked)
@@ -1332,27 +1345,33 @@ void pauseActivated(int pauser)
         {
             turnOffSprites(OAM_LETTERS, spriteNum);
             spriteNum = OAM_LETTERS;
-            const char* lines[4];
+            // heading lines, then the options
+            const char* lines[5];
+            int numHeadings = 0;
             int numLines = 0;
             if(confirming)
             {
-                lines[numLines++] = "QUIT THE GAME?";
+                for(i=0; i<numConfirmLines; i++)
+                    lines[numLines++] = confirmLines[i];
+                numHeadings = numLines;
                 lines[numLines++] = "NO";
                 lines[numLines++] = "YES";
             }
             else
             {
                 lines[numLines++] = title;
+                numHeadings = numLines;
                 for(i=0; i<numOptions; i++)
-                    lines[numLines++] = optionText[ options[i] ];
+                    lines[numLines++] = PAUSE_QUIT == options[i] ? quitText : optionText[ options[i] ];
             }
-            int top = 72 - (numLines - 1) * 10;
-            writeText(-1, top, lines[0], &spriteNum);
-            for(i=1; i<numLines; i++)
+            int top = 80 - numLines * 9;
+            for(i=0; i<numHeadings; i++)
+                writeText(-1, top + i * 18, lines[i], &spriteNum);
+            for(i=numHeadings; i<numLines; i++)
             {
                 // the selected option between dashes
                 char line[24];
-                if(i - 1 == selected)
+                if(i - numHeadings == selected)
                 {
                     strcpy(line, "- ");
                     strcat(line, lines[i]);
@@ -1360,7 +1379,7 @@ void pauseActivated(int pauser)
                 }
                 else
                     strcpy(line, lines[i]);
-                writeText(-1, top + 6 + i * 20, line, &spriteNum);
+                writeText(-1, top + 8 + i * 18, line, &spriteNum);
             }
             copyAllOAM();
             redraw = FALSE;
@@ -1374,7 +1393,10 @@ void pauseActivated(int pauser)
         {
             if( !readInputs() )
                 return;
-            input = (playersDropped & (1 << pauser)) ? allInputs() : player[pauser].input;
+            // if the player who paused is unplugged, carry on without him
+            if( playersDropped & (1 << pauser) )
+                break;
+            input = player[pauser].input;
         }
         else
             input = readLocalInput();
@@ -1425,14 +1447,25 @@ void pauseActivated(int pauser)
         saveAndQuit();
         return;
     }
-    if( PAUSE_QUIT == result )
+    // in a linked game players 2-4 leave on their own, the game goes on for the rest
+    bool leaving = PAUSE_QUIT == result && linked && 0 != pauser;
+    if( PAUSE_QUIT == result && !leaving )
     {
         quitGame(pauser);
         return;
     }
+    if( leaving && pauser == localPlayer )
+    {
+        linkLeave();
+        leftGame = TRUE;
+        fadeToBlack();
+        turnOffAllSprites();
+        copyAllOAM();
+        return;
+    }
     
     // let go of the key that continued, else it's taken as a press in the game too
-    while( lastInput )
+    while( lastInput && !leaving )
     {
         mmFrame();
         VBlankIntrWait();
@@ -1440,7 +1473,7 @@ void pauseActivated(int pauser)
         {
             if( !readInputs() )
                 return;
-            lastInput = (playersDropped & (1 << pauser)) ? allInputs() : player[pauser].input;
+            lastInput = (playersDropped & (1 << pauser)) ? 0 : player[pauser].input;
         }
         else
             lastInput = readLocalInput();
@@ -1459,6 +1492,16 @@ void pauseActivated(int pauser)
     for(i=0; i<NUM_COLOURS_USED_IN_SPRITE_PALETTE; i++)
     {
         *thisPal++ = *sourcePal++;
+    }
+    
+    // someone else left: he's out, as though unplugged, and the game goes on (if there's more
+    // than one player left) once everyone's seen who
+    if( leaving )
+    {
+        linkPlayerOut(pauser);
+        playersLeft = 1 << pauser;
+        handleLinkedDeaths(1 << pauser);
+        playersLeft = 0;
     }
     
     // return to main game loop
@@ -3194,7 +3237,7 @@ int handleLinkedDeaths(u8 unplugged)
         else
         {
             strcpy(line1, playerName[lastUnplugged]);
-            strcat(line1, " UNPLUGGED");
+            strcat(line1, (playersLeft & (1 << lastUnplugged)) ? " LEFT" : " UNPLUGGED");
         }
     }
     else if(numDead > 1)
@@ -3475,7 +3518,7 @@ void gameLoop(void)
             
             // stays in this function until unpaused
             pauseActivated(pauser);
-            if(linkLost || quitToMenu)
+            if(linkLost || quitToMenu || leftGame || matchOver)
                 return;
         }
         
@@ -3605,12 +3648,14 @@ void quitGame(int quitter)
         linkEndGame();
         matchOver = TRUE;
         
+        // (only player 1, the host, can end a linked game, the others leave it)
         char line[24];
         strcpy(line, playerName[quitter]);
-        strcat(line, " QUIT THE GAME");
+        strcat(line, " (THE HOST) LEFT");
         u32 spriteNum = OAM_LETTERS;
-        writeText(-1, 60, line, &spriteNum);
-        writeText(-1, 80, "NOBODY WINS", &spriteNum);
+        writeText(-1, 50, line, &spriteNum);
+        writeText(-1, 70, "SO THE GAME'S OVER", &spriteNum);
+        writeText(-1, 96, "NOBODY WINS", &spriteNum);
         copyAllOAM();
         
         // make sure a button held down doesn't skip it

@@ -20,7 +20,8 @@ turn.
 
 ## pausing, saving and quitting
 START pauses; the pause menu has CONTINUE, SAVE AND QUIT (single player, on a cartridge) and
-QUIT GAME, which asks again before going back to the title menu. START also carries on.
+QUIT GAME (LEAVE GAME in a linked game), which asks again before going back to the title menu.
+START also carries on.
 
 In a single player game, SAVE AND QUIT saves and goes back to the title
 menu. CONTINUE SAVED GAME then carries on from exactly where you were; the save's used up when
@@ -37,7 +38,9 @@ level until then, clearing the rubble doesn't end it; a reactor explosion ends t
 winner ("GREEN BLEW UP THE REACTOR!"), so play on a lower level if you'd rather not have them.
 
 In a linked game only the player who paused works the pause menu, so the others pressing keys
-can't quit by accident. Quitting ends the game for everyone, with nobody winning.
+can't do anything by accident. LEAVE GAME takes just that player out and the rest play on, except
+for player 1 (the host, whose Game Boy runs the link): that ends the game for everyone with
+nobody winning, so it warns first.
 
 If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
 others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.

@@ -71,7 +71,7 @@ struct Gba {
 	int botHold;
 	int pauseAt;            // game frame to press start at, 0 for never
 	int pauseStep;
-	int quitAt;             // game frame to quit the game from the pause menu at, 0 for never
+	int quitAt;             // game frame to leave the game from the pause menu at, 0 for never
 	int lobbyPress;
 	int lobbyRights;
 	int lobbyWait;
@@ -547,7 +547,7 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 	}
 	if (g->quitAt && inGame && !matchOver && timer >= g->quitAt && g->pauseStep < 130) {
-		// pause, down to QUIT GAME, A, down to YES, A
+		// pause, down to LEAVE GAME, A, down to YES, A
 		static const struct { int step, keys; } script[] = {
 			{ 0, KEY_START }, { 40, KEY_DOWN }, { 60, KEY_A }, { 90, KEY_DOWN }, { 110, KEY_A }
 		};
@@ -627,7 +627,7 @@ static void usage(void) {
 	        "  --keys GBA:FRAME:KEYS:LEN   scripted input (KEYS as a GBA key mask)\n"
 	        "  --seed GBA:N           seed for random play\n"
 	        "  --pause GBA:TIMER      press start at that game frame and again 2s later\n"
-	        "  --quit GBA:TIMER       at that game frame, quit the game from the pause menu\n"
+	        "  --quit GBA:TIMER       at that game frame, leave the game from the pause menu\n"
 	        "  --reset GBA:FRAME      reset a Gameboy, as if switched off mid-game\n"
 	        "  --trace SYM            print a (1 or 2 byte) symbol whenever it changes\n"
 	        "  --shot GBA:FRAME       save a screenshot\n"

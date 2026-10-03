@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run all the linked game tests: 2-4 Gameboys with cartridges, sending the game by multiboot
-# to Gameboys without, pausing, quitting, a reactor explosion, a Gameboy being switched off mid-game, and players who are out
+# to Gameboys without, pausing, leaving from the pause menu, a reactor explosion, a Gameboy being switched off mid-game, and players who are out
 # of the game leaving, and players being unplugged mid-game.
 #
 #   tools/linktest/all.sh [path to GBA BIOS, needed for the multiboot tests]
@@ -45,7 +45,8 @@ run "4 players" --gbas 4
 run "3 players, level 6" --gbas 3 --level 6
 run "2 players, reactor explosion" --gbas 2 --level 9 --seed 0:4 --seed 1:54 --trace nuked
 run "4 players, pause" --gbas 4 --pause 2:400
-run "4 players, quit from the pause menu" --gbas 4 --quit 2:600
+run "4 players, player 3 leaves from the pause menu" --gbas 4 --quit 2:600
+run "4 players, player 1 leaves (ending it)" --gbas 4 --quit 0:600
 run "4 players, one switched off" --gbas 4 --reset 3:1500 --frames 2000
 run "4 players, out players leave" --gbas 4 --leave 1 --leave 2 --leave 3
 run "4 players, out player unplugged" --gbas 4 --unplug-out 3 --seed 0:25 --seed 1:26 --seed 2:27 --seed 3:28
