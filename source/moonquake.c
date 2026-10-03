@@ -197,6 +197,9 @@ extern const unsigned short credits_Palette[256];
 // frames each picture of a flame lasts (see checkExplosion())
 #define FLAME_STAGE_FRAMES 5
 
+// and of exploding rubble (see checkExplodingRubble())
+#define RUBBLE_STAGE_FRAMES 3
+
 // define OAM position numbers for characters sprites
 #define OAM_LETTERS             0
 #define OAM_LASTLETTER          99
@@ -1593,6 +1596,7 @@ void nuke()
             if(T_RUBBLE == area[x][y])
             {
                 drawObject(x,y,T_RUBBLE_EXPLO_START);
+                bombVal[x][y] = 0;
             }
             else if(T_BLOCK != area[x][y] &&
                     !(area[x][y] >= T_RUBBLE_EXPLO_START && area[x][y] <= T_RUBBLE_EXPLO_END))
@@ -1994,6 +1998,7 @@ void detonateBomb(u8 x, u8 y)
                 {
                     area[nx][ny] = T_RUBBLE_EXPLO_START;
                     drawObject(nx, ny, T_RUBBLE_EXPLO_START);
+                    bombVal[nx][ny] = 0;
                     // but hit rubble so discontinue explosion
                     break;
                 }
@@ -2080,17 +2085,14 @@ void detonateBomb(u8 x, u8 y)
 // check for rubble explosions that need to be animated
 void checkExplodingRubble(u8 x, u8 y)
 {
-    // ??? rubble explosion and normal space explosion can be treated identically !?!?
-    // were previously, test out if still can be
+    // Each of the 8 pictures lasts RUBBLE_STAGE_FRAMES, timed by the tile's own counter like a
+    // flame's, so rubble burns for 24 frames (0.4s), about as long as a flame, as in the Acorn
+    // original (7 pictures of 3 frames at 50Hz; it was 2 frames each here, so it finished well
+    // before the flames). After a reactor explosion twice as long, as flames are.
+    if( ++bombVal[x][y] < (nuked ? RUBBLE_STAGE_FRAMES * 2 : RUBBLE_STAGE_FRAMES) )
+        return;
+    bombVal[x][y] = 0;
     
-    // if nuking them slow down explosion by not incrementing animation as often
-    if(nuked)
-    {
-        if(universalTimer % 8)
-            return;
-    }
-    
-    if(!(universalTimer % 2) )
     {
     
         // increment rubble explosion sequence
