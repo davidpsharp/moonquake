@@ -71,6 +71,7 @@ struct Gba {
 	int botHold;
 	int pauseAt;            // game frame to press start at, 0 for never
 	int pauseStep;
+	int quitAt;             // game frame to quit the game from the pause menu at, 0 for never
 	int lobbyPress;
 	int lobbyRights;
 	int lobbyWait;
@@ -545,6 +546,19 @@ static void frameCallback(struct mCoreThread* thread) {
 			keys = 0;
 		}
 	}
+	if (g->quitAt && inGame && !matchOver && timer >= g->quitAt && g->pauseStep < 130) {
+		// pause, down to QUIT GAME, A, down to YES, A
+		static const struct { int step, keys; } script[] = {
+			{ 0, KEY_START }, { 40, KEY_DOWN }, { 60, KEY_A }, { 90, KEY_DOWN }, { 110, KEY_A }
+		};
+		int step = g->pauseStep++;
+		keys = 0;
+		for (unsigned j = 0; j < sizeof script / sizeof script[0]; j++) {
+			if (step >= script[j].step && step < script[j].step + 3) {
+				keys = script[j].keys;
+			}
+		}
+	}
 	g->lastTimer = timer;
 	core->setKeys(core, keys);
 
@@ -613,6 +627,7 @@ static void usage(void) {
 	        "  --keys GBA:FRAME:KEYS:LEN   scripted input (KEYS as a GBA key mask)\n"
 	        "  --seed GBA:N           seed for random play\n"
 	        "  --pause GBA:TIMER      press start at that game frame and again 2s later\n"
+	        "  --quit GBA:TIMER       at that game frame, quit the game from the pause menu\n"
 	        "  --reset GBA:FRAME      reset a Gameboy, as if switched off mid-game\n"
 	        "  --trace SYM            print a (1 or 2 byte) symbol whenever it changes\n"
 	        "  --shot GBA:FRAME       save a screenshot\n"
@@ -706,6 +721,9 @@ int main(int argc, char** argv) {
 			++i;
 		} else if (!strcmp(a, "--seed") && v && sscanf(v, "%d:%d", &n, &k) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].rng = (uint32_t) k * 2654435761u + 1;
+			++i;
+		} else if (!strcmp(a, "--quit") && v && sscanf(v, "%d:%d", &n, &k) == 2 && n < MAX_GBAS_TESTED) {
+			gba[n].quitAt = k;
 			++i;
 		} else if (!strcmp(a, "--pause") && v && sscanf(v, "%d:%d", &n, &k) == 2 && n < MAX_GBAS_TESTED) {
 			gba[n].pauseAt = k;

@@ -1236,9 +1236,10 @@ u8 allInputs(void)
 }
 
 void saveAndQuit(void);
+void quitGame(int player);
 
 // handle when player has pressed pause button
-void pauseActivated()
+void pauseActivated(int pauser)
 {
     // called from main game loop when paused state identified and stays in this function for duration of pause
     
@@ -1295,52 +1296,156 @@ void pauseActivated()
         
     } // end palette change
     
-    // display message (and in a single player game with somewhere to save it, how to)
+    // The pause menu. In a linked game only the player who paused works it (everyone sees the
+    // same inputs, so all the Gameboys follow it together), so the others pressing keys can't
+    // quit the game; if that player's Gameboy is unplugged, anyone can. Nothing's taken until
+    // the keys used to pause have been let go, it starts on CONTINUE, and quitting asks again.
+    enum { PAUSE_CONTINUE, PAUSE_SAVE, PAUSE_QUIT };
     bool canSave = !linked && canSaveGames();
-    u32 spriteNum = OAM_LETTERS;
-    writeText(-1, canSave ? 60 : 72, "PAUSED", &spriteNum);
+    int options[3];
+    int numOptions = 0;
+    options[numOptions++] = PAUSE_CONTINUE;
     if(canSave)
-        writeText(-1, 90, "SELECT: SAVE AND QUIT", &spriteNum);
+        options[numOptions++] = PAUSE_SAVE;
+    options[numOptions++] = PAUSE_QUIT;
+    static const char* const optionText[] = { "CONTINUE", "SAVE AND QUIT", "QUIT GAME" };
     
-    copyAllOAM();
-    
-    // wait for start to be released, pressed and released again, by either player in a linked
-    // game (both Gameboys see the same presses so they unpause together)
-    int stage = 0;
-    while( stage < 3 )
+    char title[20];
+    if(linked)
     {
-        bool startHeld;
+        strcpy(title, playerName[pauser]);
+        strcat(title, " PAUSED");
+    }
+    else
+        strcpy(title, "PAUSED");
+    
+    int selected = 0;
+    bool confirming = FALSE;    // asking "QUIT THE GAME?", selected is then 0 for no, 1 for yes
+    bool redraw = TRUE;
+    u8 lastInput = 0xFF;        // (nothing counts as pressed until everything's been let go)
+    u32 spriteNum = OAM_LETTERS;
+    int result = -1;
+    
+    while( result < 0 )
+    {
+        if(redraw)
+        {
+            turnOffSprites(OAM_LETTERS, spriteNum);
+            spriteNum = OAM_LETTERS;
+            const char* lines[4];
+            int numLines = 0;
+            if(confirming)
+            {
+                lines[numLines++] = "QUIT THE GAME?";
+                lines[numLines++] = "NO";
+                lines[numLines++] = "YES";
+            }
+            else
+            {
+                lines[numLines++] = title;
+                for(i=0; i<numOptions; i++)
+                    lines[numLines++] = optionText[ options[i] ];
+            }
+            int top = 72 - (numLines - 1) * 10;
+            writeText(-1, top, lines[0], &spriteNum);
+            for(i=1; i<numLines; i++)
+            {
+                // the selected option between dashes
+                char line[24];
+                if(i - 1 == selected)
+                {
+                    strcpy(line, "- ");
+                    strcat(line, lines[i]);
+                    strcat(line, " -");
+                }
+                else
+                    strcpy(line, lines[i]);
+                writeText(-1, top + 6 + i * 20, line, &spriteNum);
+            }
+            copyAllOAM();
+            redraw = FALSE;
+        }
         
+        mmFrame();
+        VBlankIntrWait();
+        
+        u8 input;
         if( linked )
         {
             if( !readInputs() )
-                break;
-            startHeld = ( allInputs() & IN_START ) != 0;
-        }
-        else
-        {
-            startHeld = KEY_DOWN( KEYSTART );
-            
-            if( canSave && KEY_DOWN( KEYSELECT ) )
-            {
-                saveAndQuit();
                 return;
-            }
+            input = (playersDropped & (1 << pauser)) ? allInputs() : player[pauser].input;
         }
-        
-        // stage 1 waits for a press, stages 0 and 2 for a release
-        if( startHeld == (1 == stage) )
-            stage++;
         else
+            input = readLocalInput();
+        u8 pressed = input & ~lastInput;
+        if( lastInput == 0xFF && input )
+            pressed = 0;
+        else
+            lastInput = input;
+        
+        int numChoices = confirming ? 2 : numOptions;
+        if( pressed & IN_START )
+            result = PAUSE_CONTINUE;
+        else if( pressed & (IN_UP | IN_DOWN) )
         {
-            mmFrame();
-            VBlankIntrWait();
+            selected = (selected + ((pressed & IN_UP) ? numChoices - 1 : 1)) % numChoices;
+            menuBlip();
+            redraw = TRUE;
+        }
+        else if( pressed & IN_BOMB )
+        {
+            if(confirming)
+            {
+                if(selected)
+                    result = PAUSE_QUIT;
+                else
+                {
+                    confirming = FALSE;
+                    selected = numOptions - 1;
+                }
+            }
+            else if( PAUSE_QUIT == options[selected] )
+            {
+                confirming = TRUE;
+                selected = 0;
+            }
+            else
+                result = options[selected];
+            menuBlip();
+            redraw = TRUE;
         }
     }
     
-    // remove the pause banner
     turnOffSprites(OAM_LETTERS, spriteNum);
     copyAllOAM();
+    
+    if( PAUSE_SAVE == result )
+    {
+        saveAndQuit();
+        return;
+    }
+    if( PAUSE_QUIT == result )
+    {
+        quitGame(pauser);
+        return;
+    }
+    
+    // let go of the key that continued, else it's taken as a press in the game too
+    while( lastInput )
+    {
+        mmFrame();
+        VBlankIntrWait();
+        if( linked )
+        {
+            if( !readInputs() )
+                return;
+            lastInput = (playersDropped & (1 << pauser)) ? allInputs() : player[pauser].input;
+        }
+        else
+            lastInput = readLocalInput();
+    }
+    
     
     // restore palettes (use irrespective of whether grey scaled or dimmed colours)
     volatile u16* thisPal = pal;
@@ -3363,8 +3468,13 @@ void gameLoop(void)
         
         if( allInputs() & IN_START )
         {
+            // whoever pressed START (the lowest numbered if more than one) works the pause menu
+            int pauser = 0;
+            while( !(player[pauser].inGame && (player[pauser].input & IN_START)) )
+                pauser++;
+            
             // stays in this function until unpaused
-            pauseActivated();
+            pauseActivated(pauser);
             if(linkLost || quitToMenu)
                 return;
         }
@@ -3479,6 +3589,35 @@ void saveAndQuit(void)
     writeText(-1, 72, "GAME SAVED", &spriteNum);
     copyAllOAM();
     delay(90);
+    
+    fadeToBlack();
+    turnOffAllSprites();
+    copyAllOAM();
+    quitToMenu = TRUE;
+}
+
+// from the pause screen: give up the game and go back to the menu, in a linked game ending it
+// for everyone (all the Gameboys get here on the same frame)
+void quitGame(int quitter)
+{
+    if(linked)
+    {
+        linkEndGame();
+        matchOver = TRUE;
+        
+        char line[24];
+        strcpy(line, playerName[quitter]);
+        strcat(line, " QUIT THE GAME");
+        u32 spriteNum = OAM_LETTERS;
+        writeText(-1, 60, line, &spriteNum);
+        writeText(-1, 80, "NOBODY WINS", &spriteNum);
+        copyAllOAM();
+        
+        // make sure a button held down doesn't skip it
+        delay(60);
+        for( ; (~KEYS) & 0x3FF ; ) { mmFrame(); VBlankIntrWait(); }
+        waitForKeyPress();
+    }
     
     fadeToBlack();
     turnOffAllSprites();
@@ -3918,6 +4057,7 @@ void linkGame(void)
     linkLost = FALSE;
     matchOver = FALSE;
     leftGame = FALSE;
+    quitToMenu = FALSE;
     playersDropped = 0;
     spectating = FALSE;
     

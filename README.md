@@ -18,8 +18,11 @@ On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Unt
 switched off, START GAME then asks which level to start on; SELECT there plays each sound effect in
 turn.
 
-## saving a game
-In a single player game, pause with START and press SELECT to save and go back to the title
+## pausing, saving and quitting
+START pauses; the pause menu has CONTINUE, SAVE AND QUIT (single player, on a cartridge) and
+QUIT GAME, which asks again before going back to the title menu. START also carries on.
+
+In a single player game, SAVE AND QUIT saves and goes back to the title
 menu. CONTINUE SAVED GAME then carries on from exactly where you were; the save's used up when
 you continue, so to stop again pause and save again. It's kept in the cartridge's battery backed
 SRAM (a Game Boy that was sent the game by multiboot has nowhere to save).
@@ -32,6 +35,9 @@ right, red top left, orange top right and pink bottom left, and it's the normal 
 dropping bombs: 3 lives each, run out and you're out, last one alive wins. The game stays on that
 level until then, clearing the rubble doesn't end it; a reactor explosion ends the match with no
 winner ("GREEN BLEW UP THE REACTOR!"), so play on a lower level if you'd rather not have them.
+
+In a linked game only the player who paused works the pause menu, so the others pressing keys
+can't quit by accident. Quitting ends the game for everyone, with nobody winning.
 
 If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
 others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.
