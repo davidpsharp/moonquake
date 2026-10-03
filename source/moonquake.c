@@ -1335,11 +1335,32 @@ void pauseActivated(int pauser)
     else
         strcpy(title, "PAUSED");
     
+    // only the Gameboy of the player who paused shows the menu, the others just say who paused
+    bool showMenu = pauser == localPlayer;
+    
+    // the selected option glows, as on the title menu: the letters are made brighter, which
+    // needs the other sprites (the men, robots and halos) in semi-transparent mode, where it
+    // doesn't touch them (and blending's set so they look the same)
+    u16 savedMode[128 - OAM_ROBOTS];
+    for(i=OAM_ROBOTS; i<128; i++)
+    {
+        savedMode[i - OAM_ROBOTS] = sprites[i].attr0 & 0xC00;
+        sprites[i].attr0 = (sprites[i].attr0 & ~0xC00) | (1 << 10);
+    }
+    u16 savedBlend = REG_BLDMOD;
+    u16 savedAlpha = REG_COLEV;
+    BrightnessInit();
+    
     int selected = 0;
     bool confirming = FALSE;    // asking "QUIT THE GAME?", selected is then 0 for no, 1 for yes
     bool redraw = TRUE;
+    bool firstDraw = TRUE;
     u8 lastInput = 0xFF;        // (nothing counts as pressed until everything's been let go)
     u32 spriteNum = OAM_LETTERS;
+    u32 firstSprite[4];         // first sprite of each option, and one past the last
+    int fadeValue = 0;
+    int fadeDirection = 1;
+    int frames = 0;
     int result = -1;
     
     while( result < 0 )
@@ -1352,7 +1373,7 @@ void pauseActivated(int pauser)
             const char* lines[5];
             int numHeadings = 0;
             int numLines = 0;
-            if(confirming)
+            if(confirming && showMenu)
             {
                 for(i=0; i<numConfirmLines; i++)
                     lines[numLines++] = confirmLines[i];
@@ -1364,38 +1385,59 @@ void pauseActivated(int pauser)
             {
                 lines[numLines++] = title;
                 numHeadings = numLines;
-                for(i=0; i<numOptions; i++)
-                    lines[numLines++] = PAUSE_QUIT == options[i] ? quitText : optionText[ options[i] ];
+                if(showMenu)
+                    for(i=0; i<numOptions; i++)
+                        lines[numLines++] = PAUSE_QUIT == options[i] ? quitText : optionText[ options[i] ];
             }
+            // typed out the first time, at once when going to and from "QUIT THE GAME?"
             int top = 80 - numLines * 9;
-            for(i=0; i<numHeadings; i++)
-                writeText(-1, top + i * 18, lines[i], &spriteNum);
-            for(i=numHeadings; i<numLines; i++)
+            for(i=0; i<numLines; i++)
             {
-                // the selected option between dashes
-                char line[24];
-                if(i - numHeadings == selected)
-                {
-                    strcpy(line, "- ");
-                    strcat(line, lines[i]);
-                    strcat(line, " -");
-                }
+                int y = top + i * 18 + (i < numHeadings ? 0 : 8);
+                if(i >= numHeadings)
+                    firstSprite[i - numHeadings] = spriteNum;
+                if(firstDraw)
+                    writeText(-1, y, lines[i], &spriteNum);
                 else
-                    strcpy(line, lines[i]);
-                writeText(-1, top + 8 + i * 18, line, &spriteNum);
+                    writeTextImmediately(-1, y, lines[i], &spriteNum, -1);
             }
+            firstSprite[numLines - numHeadings] = spriteNum;
+            
+            BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum - 1);
+            if(showMenu)
+                BrightnessSetSpritesActive(firstSprite[selected], firstSprite[selected + 1] - 1);
+            fadeValue = 0;
+            fadeDirection = 1;
             copyAllOAM();
             redraw = FALSE;
+            firstDraw = FALSE;
+        }
+        
+        // the glow, a step every other frame as on the title menu
+        if( showMenu && (++frames & 1) )
+        {
+            fadeValue += fadeDirection;
+            if(fadeValue > 13)
+            {
+                fadeDirection = -1;
+                fadeValue = 12;
+            }
+            else if(fadeValue < 0)
+            {
+                fadeDirection = 1;
+                fadeValue = 1;
+            }
         }
         
         mmFrame();
         VBlankIntrWait();
+        BrightnessSetLevel(fadeValue);
         
         u8 input;
         if( linked )
         {
             if( !readInputs() )
-                return;
+                break;
             // if the player who paused is unplugged, carry on without him
             if( playersDropped & (1 << pauser) )
                 break;
@@ -1414,9 +1456,16 @@ void pauseActivated(int pauser)
             result = PAUSE_CONTINUE;
         else if( pressed & (IN_UP | IN_DOWN) )
         {
+            // just move the glow
             selected = (selected + ((pressed & IN_UP) ? numChoices - 1 : 1)) % numChoices;
-            menuBlip();
-            redraw = TRUE;
+            if(showMenu)
+            {
+                BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum - 1);
+                BrightnessSetSpritesActive(firstSprite[selected], firstSprite[selected + 1] - 1);
+                fadeValue = 0;
+                fadeDirection = 1;
+                copySelectOAM(OAM_LETTERS, spriteNum);
+            }
         }
         else if( pressed & IN_BOMB )
         {
@@ -1428,22 +1477,31 @@ void pauseActivated(int pauser)
                 {
                     confirming = FALSE;
                     selected = numOptions - 1;
+                    redraw = TRUE;
                 }
             }
             else if( PAUSE_QUIT == options[selected] )
             {
                 confirming = TRUE;
                 selected = 0;
+                redraw = TRUE;
             }
             else
                 result = options[selected];
-            menuBlip();
-            redraw = TRUE;
         }
     }
     
+    // the blending and the other sprites back as they were
+    BrightnessEnd();
+    REG_BLDMOD = savedBlend;
+    REG_COLEV = savedAlpha;
+    for(i=OAM_ROBOTS; i<128; i++)
+        sprites[i].attr0 = (sprites[i].attr0 & ~0xC00) | savedMode[i - OAM_ROBOTS];
+    
     turnOffSprites(OAM_LETTERS, spriteNum);
     copyAllOAM();
+    if( linkLost )
+        return;
     
     if( PAUSE_SAVE == result )
     {
