@@ -3209,11 +3209,27 @@ int handleLinkedDeaths(u8 unplugged)
         }
         else
         {
+            // if it's won because the others left or were unplugged, say so first
+            int y = 60;
+            if(numUnplugged && !numDead)
+            {
+                char reason[24];
+                if(numUnplugged > 1)
+                    strcpy(reason, "PLAYERS UNPLUGGED");
+                else
+                {
+                    strcpy(reason, playerName[lastUnplugged]);
+                    strcat(reason, (playersLeft & (1 << lastUnplugged)) ? " LEFT" : " UNPLUGGED");
+                }
+                writeText(-1, 44, reason, &spriteNum);
+                y = 70;
+            }
+            
             char winMessage[20];
             strcpy(winMessage, playerName[winner]);
             strcat(winMessage, " WINS!");
-            writeText(-1, 60, winMessage, &spriteNum);
-            writeText(-1, 80, winner == localPlayer ? "WELL DONE" : "UNLUCKY", &spriteNum);
+            writeText(-1, y, winMessage, &spriteNum);
+            writeText(-1, y + 20, winner == localPlayer ? "WELL DONE" : "UNLUCKY", &spriteNum);
         }
         copyAllOAM();
         
