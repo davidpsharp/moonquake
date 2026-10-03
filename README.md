@@ -37,9 +37,10 @@ Player 1 has to stay connected: its Game Boy runs the link. Unplug rather than s
 while still connected, as a switched-off Game Boy on the cable may stop everyone.
 
 An Analogue Pocket (firmware 1.6, openFPGA or its own GBA mode) works as player 2, 3 or 4,
-including being sent the game. As player 1, with a Gamster 4-player cable and GBA SPs, it never
-got a link going (Mario Kart: Super Circuit didn't either). It's not yet known whether that's the
-Pocket or that cable, a plain two-player cable would tell. Until then, use a GBA as player 1.
+including being sent the game. As player 1 some link cables work better than others: with a
+Gamster 4-player cable it never got a link going with GBA SPs (Mario Kart: Super Circuit didn't
+either), while plainer cables such as Nintendo's own (AGB-005) or Analogue's Pocket link cable are
+expected to work but haven't been tried yet. With a cable like the Gamster, use a GBA as player 1.
 
 Only player 1 needs the game. Switch the others on with no cartridge in: player 1 sends them the
 game over the cable (it takes around half a minute for one, longer for three) and they start up
