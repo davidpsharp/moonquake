@@ -185,6 +185,11 @@ extern const unsigned short credits_Palette[256];
 
 #define MAX_ROBOTS 10       // max number of robots allowed on any level
 
+// how long a halo (protection when starting, coming back to life, or from a token) lasts, in
+// frames: as the Acorn original, which counted a man's state down from 512 to 255 a frame at a
+// time (it was 700, more than twice as long)
+#define HALO_FRAMES 257
+
 // define OAM position numbers for characters sprites
 #define OAM_LETTERS             0
 #define OAM_LASTLETTER          99
@@ -847,10 +852,17 @@ void menuBlip()
 // simple fade of the 256 colour palette to black (i.e. doesn't fade proportional to brightness, which would need LUT)
 void fadeToBlack()
 {
+    // two steps (of the 32 to black) a frame, about a quarter of a second
     u16 palCount;
     for(palCount = 0; palCount<32; palCount++)
     {   
         u16 i;
+        
+        if( palCount & 1 )
+        {
+            mmFrame();
+            VBlankIntrWait();
+        }
         
         // tile palette
         for(i=0; i<256; i++)
@@ -944,10 +956,12 @@ void fadeInColoursOneStep(volatile u16* actualPalette, const u16* desiredPalette
 // fade colours of one palette in from black to light
 void fadeBitmapPaletteIn(const unsigned short* palette)
 {
+    // a step a frame (wait() would let several go in one frame if already in the vblank)
     u16 shadeCount;
     for(shadeCount = 0; shadeCount<16; shadeCount++)
     {
-        wait();
+        mmFrame();
+        VBlankIntrWait();
         fadeInColoursOneStep(pal, palette, 256);
     }   
 }
@@ -966,10 +980,12 @@ void fadePaletteIn()
         OBJPaletteMem[i] = 0;
     }
     
+    // a step a frame (wait() would let several go in one frame if already in the vblank)
     u16 shadeCount;
     for(shadeCount = 0; shadeCount<16; shadeCount++)
     {
-        wait();
+        mmFrame();
+        VBlankIntrWait();
         
         // do for both OAM and tile palettes
         u8 paletteCount;
@@ -1039,6 +1055,10 @@ void fadeOutSprites(int firstSprite, int lastSprite)
       
     ////////// turn OFF alpha blending //////////
     
+    // take the faded sprites off first, else they come back at full brightness
+    turnOffSprites(firstSprite, lastSprite + 1);
+    wait();
+    copyAllOAM();
     REG_COLEV = 0x10;
     
 }
@@ -2046,8 +2066,8 @@ void moveRobots()
 {
 	// ??? could be that it's this code slowing up the game when there are more robots as it's quite intense
 	
-    // every other frame update robots
-    if( !(universalTimer % 2) )
+    // Robots move a pixel a frame, 16 frames a tile, half the man's speed, as in the Acorn
+    // original (they used to move every other frame, so only a quarter of the man's speed)
     {
         int i;
         for(i=0; i<totalRobots; i++)
@@ -2160,14 +2180,13 @@ void generateLevel(void)
         {
             // keep corners clear for men and then cover 2/3 of map with rubble
             // ??? check this <29 logic works for different size play areas in case we ever want to change area
-            // ??? should this be rand(16) or rand(15) check how RND works on Acorn compared to C
-            // should be <10 for rand part
+            // the original's RND(15)<10: RND(15) is 1-15, so 9 chances in 15
             
             if( (x+y) > 1 &&
                 (x+y) < ((AREA_X + AREA_Y) - 3) &&
                 !(player[2].inGame && (AREA_X-1-x) + y <= 1) &&
                 !(player[3].inGame && x + (AREA_Y-1-y) <= 1) &&
-                (gameRand() % 16) < 10 )
+                (gameRand() % 15) < 9 )
             {
                 drawObject(x,y,T_RUBBLE);
                 rubbleCount++;
@@ -3275,7 +3294,7 @@ void gameLoop(void)
                         p->autoPlantBombs = FALSE;
                 
                 if(p->halo)
-                    if( (u16)(universalTimer - p->haloTimer) > 700 )
+                    if( (u16)(universalTimer - p->haloTimer) > HALO_FRAMES )
                         p->halo = FALSE;
             }
             
