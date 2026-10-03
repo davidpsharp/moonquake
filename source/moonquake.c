@@ -318,6 +318,11 @@ EWRAM_BSS u16 recolouredMen[2][MAN_FRAMES * FRAME_U16S];
 // sprite characters after the ones loaded from sprites_Bitmap, used for the orange and pink men
 #define STREAM_CHAR (26112/32)
 
+// a player out of a linked game scrolls the screen around with the d-pad, from where he died
+// (only what this Gameboy shows, not part of the game the Gameboys keep the same)
+bool spectating;
+s16 spectateX, spectateY;   // where the screen's centred, in the same terms as a man's position
+
 u16 xOffset;    // screen offsets to be fed to hardware regs
 u16 yOffset;
 bool nuked;
@@ -1428,6 +1433,13 @@ void updateBackgroundOffset(void)
     s16 manX = player[localPlayer].x;
     s16 manY = player[localPlayer].y;
     
+    // a player who's out of a linked game looks around with the d-pad instead
+    if(spectating)
+    {
+        manX = spectateX;
+        manY = spectateY;
+    }
+    
     // scroll background in X
     if(manX >= 7 * 16)
     {   
@@ -1445,6 +1457,32 @@ void updateBackgroundOffset(void)
     }
     else
         yOffset = 0;
+}
+
+// a player out of a linked game: move the view around with the d-pad
+void spectate(void)
+{
+    // the view scrolls while the centre's in this range (see updateBackgroundOffset())
+    const s16 minX = 7 * 16, maxX = 7 * 16 + 4 * 16;
+    const s16 minY = 5 * 16, maxY = 5 * 16 + 3 * 16;
+    
+    if(!spectating)
+    {
+        spectating = TRUE;
+        spectateX = player[localPlayer].x;
+        spectateY = player[localPlayer].y;
+    }
+    
+    if( KEY_DOWN( KEYLEFT ) )  spectateX -= 2;
+    if( KEY_DOWN( KEYRIGHT ) ) spectateX += 2;
+    if( KEY_DOWN( KEYUP ) )    spectateY -= 2;
+    if( KEY_DOWN( KEYDOWN ) )  spectateY += 2;
+    
+    // keep it where it moves the view, so it responds straight away when turned round
+    if(spectateX < minX) spectateX = minX;
+    if(spectateX > maxX) spectateX = maxX;
+    if(spectateY < minY) spectateY = minY;
+    if(spectateY > maxY) spectateY = maxY;
 }
 
 // set up a sprite at a position on the game board, allowing for the screen scroll
@@ -2869,12 +2907,13 @@ bool anyPlayer(u8 lifeStatus)
 }
 
 // show a banner of up to two lines over the game, wait a bit then remove it
-void showGameBanner(const char* line1, const char* line2)
+void showGameBanner(const char* const* lines, int numLines)
 {
     u32 spriteNum = OAM_LETTERS;
-    writeText(-1, 60, line1, &spriteNum);
-    if(line2)
-        writeText(-1, 80, line2, &spriteNum);
+    int y = 72 - (numLines - 1) * 9;    // centred, 18 pixels apart
+    int i;
+    for(i=0; i<numLines; i++)
+        writeText(-1, y + i * 18, lines[i], &spriteNum);
     
     delayOrKeypress(120);
     
@@ -3000,44 +3039,33 @@ int handleLinkedDeaths(u8 unplugged)
         strcat(line1, player[lastDead].lifeStatus == OUT ? " IS OUT" : " DIED");
     }
     
-    char line2[32];
-    if(2 == numInGame)
+    // then everyone's lives left, always in the same order
+    const char* lines[1 + MAX_PLAYERS];
+    char livesText[MAX_PLAYERS][12];
+    int numLines = 0;
+    lines[numLines++] = line1;
+    for(i=0; i<MAX_PLAYERS; i++)
     {
-        // room to spell the colours out
-        strcpy(line2, "LIVES: ");
-        for(i=0; i<MAX_PLAYERS; i++)
+        if(player[i].inGame)
         {
-            if(player[i].inGame)
-            {
-                char lives[] = " X  ";
-                lives[1] = '0' + player[i].lives + 1;
-                strcat(line2, playerName[i]);
-                strcat(line2, lives);
-            }
+            int left = player[i].lifeStatus == OUT ? 0 : player[i].lives + 1;
+            strcpy(livesText[i], playerName[i]);
+            strcat(livesText[i], " X");
+            livesText[i][ strlen(livesText[i]) - 1 ] = '0' + left;
+            lines[numLines++] = livesText[i];
         }
     }
-    else
-    {
-        strcpy(line2, "LIVES:");
-        for(i=0; i<MAX_PLAYERS; i++)
-        {
-            if(player[i].inGame)
-            {
-                char lives[] = " CX";
-                lives[1] = playerName[i][0];
-                lives[2] = player[i].lifeStatus == OUT ? '-' : '0' + player[i].lives + 1;
-                strcat(line2, lives);
-            }
-        }
-    }
-    // and if this Gameboy's player has just gone out, how to leave
+    
+    // or if this Gameboy's player has just gone out, what he can do now
     if(localWentOut)
     {
-        strcpy(line1, "YOU'RE OUT");
+        lines[0] = "YOU'RE OUT";
+        lines[1] = "D-PAD LOOKS AROUND";
         // (player 1's Gameboy runs the link so can't leave)
-        strcpy(line2, 0 == localPlayer ? "BUT KEEP WATCHING" : "SELECT LEAVES GAME");
+        lines[2] = "SELECT LEAVES GAME";
+        numLines = 0 == localPlayer ? 2 : 3;
     }
-    showGameBanner(line1, line2);
+    showGameBanner(lines, numLines);
     
     // after a reactor explosion play goes on on the same board, the survivors come back to
     // life like anyone else (explosions go back to normal, and halos protect again)
@@ -3303,6 +3331,8 @@ void gameLoop(void)
             if(player[i].inGame)
                 moveMan(&player[i]);
         
+        if( linked && player[localPlayer].lifeStatus == OUT )
+            spectate();
         updateBackgroundOffset();
         drawPlayers();
         
@@ -3407,6 +3437,7 @@ void startGameAndManageContinues(bool continueSaved)
     localPlayer = 0;
     gameRandSeed = rand();
     quitToMenu = FALSE;
+    spectating = FALSE;
     
     rubbleCount = 0;
     initialiseGame();
@@ -3827,6 +3858,7 @@ void linkGame(void)
     matchOver = FALSE;
     leftGame = FALSE;
     playersDropped = 0;
+    spectating = FALSE;
     
     // agree a random seed for the game, made up from all the Gameboys' random numbers
     u32 seed = 0;
