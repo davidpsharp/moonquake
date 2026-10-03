@@ -74,6 +74,7 @@ struct Gba {
 	int lobbyPress;
 	int lobbyRights;
 	int lobbyWait;
+	int afterDone;
 	int leave;              // tap select during the game, so leave once out
 	int unplugWhenOut;      // pull the cable out once out of the game
 	int unplugAt;           // pull the cable out at this frame, 0 for never
@@ -131,6 +132,7 @@ static int lobbyPlayers;                // GBA 0 presses start in the lobby when
 static int lobbyLevel;                  // and first presses right this many times to choose the level
 static const char* carts[MAX_GBAS_TESTED];
 static int maxFrames = 20000;
+static int afterMatch;      // frames to carry on after a match (pressing A to clear the result)
 static uint32_t traceAddr[4], traceSize[4], traceLast[MAX_GBAS_TESTED][4];
 static const char* traceName[4];
 static int numTraces;
@@ -546,7 +548,39 @@ static void frameCallback(struct mCoreThread* thread) {
 	g->lastTimer = timer;
 	core->setKeys(core, keys);
 
-	if (frame >= maxFrames || (g->ended && frame > g->ended + 90)) {
+	if (afterMatch && g->ended) {
+		// clear the result screen, then leave the menu be
+		keys = (frame > g->ended + 120 && frame < g->ended + 125) ? KEY_A : 0;
+		core->setKeys(core, keys);
+		if (g->numShots < MAX_SHOTS && frame == g->ended + afterMatch - 5) {
+			g->shots[g->numShots++] = frame + 1;
+		}
+		if (frame == g->ended + afterMatch - 4 && shotDir) {
+			// and the sprites, to see which menu entry's highlighted
+			char path[512];
+			snprintf(path, sizeof(path), "%s/oam%d.bin", shotDir, g->id);
+			FILE* f = fopen(path, "wb");
+			for (int i = 0; f && i < 1024; ++i) {
+				fputc(core->busRead8(core, 0x07000000 + i), f);
+			}
+			if (f) {
+				fclose(f);
+			}
+		}
+	}
+	if (afterMatch) {
+		// with --after-match, stop once every Gameboy's had its time after the match
+		if (g->ended && frame > g->ended + afterMatch) {
+			g->afterDone = 1;
+		}
+		int allDone = 1;
+		for (int i = 0; i < numGbas; ++i) {
+			allDone &= gba[i].afterDone;
+		}
+		if (allDone || frame >= maxFrames) {
+			stop = 1;
+		}
+	} else if (frame >= maxFrames || (g->ended && frame > g->ended + 90)) {
 		stop = 1;
 	}
 }
@@ -559,6 +593,8 @@ static void usage(void) {
 	        "                         boot the BIOS to wait for multiboot)\n"
 	        "  --si-flicker           make the other Gameboys' SI bit read low at random, as on real\n"
 	        "                         hardware during transfers\n"
+	        "  --after-match N        run N frames after a match (pressing A to clear the result),\n"
+	        "                         and save a screenshot at the end\n"
 	        "  --lobby N              GBA 0 presses start in the lobby once N players are waiting\n"
 	        "  --level N              and first chooses level N (presses right N times)\n"
 	        "                         (needs --info receivedWord=...)\n"
@@ -654,6 +690,8 @@ int main(int argc, char** argv) {
 			siFlicker = 1;
 		} else if (!strcmp(a, "--level") && v) {
 			lobbyLevel = atoi(v); ++i;
+		} else if (!strcmp(a, "--after-match") && v) {
+			afterMatch = atoi(v); ++i;
 		} else if (!strcmp(a, "--lobby") && v) {
 			lobbyPlayers = atoi(v); ++i;
 		} else if (!strcmp(a, "--sym") && v && numSyms < MAX_SYMS) {

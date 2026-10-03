@@ -3944,6 +3944,10 @@ void linkGame(void)
 // title menu options
 enum { MENU_CONTINUE, MENU_START, MENU_DEEP_END, MENU_INSTRUCTIONS, MENU_LINK };
 
+// TRUE if the last thing chosen from the title menu was a linked game, which the menu then
+// starts on
+bool lastPlayedLinked;
+
 // For testing: L R L R SELECT on the title menu turns on a cheat that lets a single player game
 // start on any level (until the Gameboy's switched off).
 bool cheatMode;
@@ -4090,6 +4094,7 @@ int main(void)
     if( multibooted() )
     {
         linkGame();
+        lastPlayedLinked = TRUE;
     }
     // skip title screens if in development
     else if(!inDevelopment)
@@ -4161,6 +4166,11 @@ int main(void)
             options[numberOfOptions++] = MENU_DEEP_END;
             options[numberOfOptions++] = MENU_INSTRUCTIONS;
             options[numberOfOptions++] = MENU_LINK;
+            
+            // after a linked game, start with 2-4 PLAYER LINK highlighted so everyone can just
+            // press it again for another game
+            if(lastPlayedLinked)
+                selected = numberOfOptions - 1;
 
             // first sprite of each option's text, and one past the last
             u32 firstSprite[6];
@@ -4184,7 +4194,7 @@ int main(void)
             BrightnessInit();
             
             BrightnessSetSpritesInactive(OAM_LETTERS, spriteNum - 1);
-            BrightnessSetSpritesActive(firstSprite[0], firstSprite[1] - 1);
+            BrightnessSetSpritesActive(firstSprite[selected], firstSprite[selected + 1] - 1);
             
             // flags whether the last button press detected has been released (to force discrete button
             // press and not have to time for auto-repeat)
@@ -4297,6 +4307,7 @@ int main(void)
             selected = MENU_DEEP_END; // in at the deep end for development mode
         }
 
+        lastPlayedLinked = (MENU_LINK == selected);
         switch(selected)
         {
             case MENU_CONTINUE: startGameAndManageContinues(TRUE); break;
