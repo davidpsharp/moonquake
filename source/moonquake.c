@@ -190,6 +190,10 @@ extern const unsigned short credits_Palette[256];
 // time (it was 700, more than twice as long)
 #define HALO_FRAMES 257
 
+// how long the robot freeze and auto bomb mystery tokens last, in frames: 15 seconds (the
+// original's lasted until the next such token; this was 2000, 33 seconds)
+#define MYSTERY_FRAMES (15 * 60)
+
 // frames each picture of a flame lasts (see checkExplosion())
 #define FLAME_STAGE_FRAMES 5
 
@@ -3297,7 +3301,7 @@ void gameLoop(void)
             // (differences taken as u16 so they still work when universalTimer wraps round)
             if(robotsHalt)
             {
-                if( (u16)(universalTimer - robotsHaltCount) > 2000 )
+                if( (u16)(universalTimer - robotsHaltCount) > MYSTERY_FRAMES )
                     robotsHalt = FALSE;
             }
             
@@ -3308,7 +3312,7 @@ void gameLoop(void)
                     continue;
                 
                 if(p->autoPlantBombs)
-                    if( (u16)(universalTimer - p->autoPlantTimer) > 2000 )
+                    if( (u16)(universalTimer - p->autoPlantTimer) > MYSTERY_FRAMES )
                         p->autoPlantBombs = FALSE;
                 
                 if(p->halo)
