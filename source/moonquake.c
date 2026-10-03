@@ -338,6 +338,7 @@ s16 spectateX, spectateY;   // where the screen's centred, in the same terms as 
 u16 xOffset;    // screen offsets to be fed to hardware regs
 u16 yOffset;
 bool nuked;
+u8 nukedBy;                 // in a linked game, the player whose bomb set the reactor off
 int level;          // game level
 int startLevel;     // which level game started on (in case different)
 int score;
@@ -1881,6 +1882,7 @@ void detonateBomb(u8 x, u8 y)
                 if(T_NUKE1 == area[nx][ny] || T_NUKE0 == area[nx][ny])
                 {
                 	// explode nuclear reactor
+                    nukedBy = bombOwner[x][y];
                     nuke();
                     return; // whole screen blowing so no need for this explosion
                 }
@@ -3025,7 +3027,8 @@ int handleLinkedDeaths(u8 unplugged)
         }
     }
     
-    if(numLeft <= 1)
+    // a reactor explosion ends the match with no winner, as in the Acorn original
+    if(numLeft <= 1 || nuked)
     {
         // all the Gameboys reach here on the same frame, finish with the link now so none
         // is left waiting for another while the result's displayed
@@ -3033,7 +3036,16 @@ int handleLinkedDeaths(u8 unplugged)
         matchOver = TRUE;
         
         u32 spriteNum = OAM_LETTERS;
-        if(!numLeft)
+        if(nuked)
+        {
+            char line[20];
+            strcpy(line, playerName[nukedBy]);
+            strcat(line, " BLEW UP");
+            writeText(-1, 50, line, &spriteNum);
+            writeText(-1, 68, "THE REACTOR!", &spriteNum);
+            writeText(-1, 94, "MISSION ABORTED", &spriteNum);
+        }
+        else if(!numLeft)
         {
             writeText(-1, 60, "IT'S A DRAW!", &spriteNum);
         }
@@ -3070,8 +3082,6 @@ int handleLinkedDeaths(u8 unplugged)
             strcat(line1, " UNPLUGGED");
         }
     }
-    else if(nuked)
-        strcpy(line1, "REACTOR EXPLOSION");
     else if(numDead > 1)
         strcpy(line1, numDead == numInGame ? "EVERYONE DIED" : "BOOM! MULTI-KILL");
     else
@@ -3107,10 +3117,6 @@ int handleLinkedDeaths(u8 unplugged)
         numLines = 0 == localPlayer ? 2 : 3;
     }
     showGameBanner(lines, numLines);
-    
-    // after a reactor explosion play goes on on the same board, the survivors come back to
-    // life like anyone else (explosions go back to normal, and halos protect again)
-    nuked = FALSE;
     
     // as in a single player game, the dead come back to life where they died with a halo
     robotsHalt = FALSE;

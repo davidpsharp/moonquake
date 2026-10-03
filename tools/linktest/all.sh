@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run all the linked game tests: 2-4 Gameboys with cartridges, sending the game by multiboot
-# to Gameboys without, pausing, a Gameboy being switched off mid-game, and players who are out
+# to Gameboys without, pausing, a reactor explosion, a Gameboy being switched off mid-game, and players who are out
 # of the game leaving, and players being unplugged mid-game.
 #
 #   tools/linktest/all.sh [path to GBA BIOS, needed for the multiboot tests]
@@ -25,6 +25,12 @@ run() {
             fi
             ;;
     esac
+    # the reactor test has to have blown one up (else the random play needs other seeds)
+    case "$*" in
+        *"--trace nuked"*)
+            echo "$output" | grep -q 'nuked = 1' || result="$result, but no reactor went off"
+            ;;
+    esac
     echo "$name: ${result:-no result}"
     [ -n "$result" ] || echo "$output" | tail -5
     case "$result" in
@@ -37,6 +43,7 @@ run "2 players" --gbas 2
 run "3 players" --gbas 3
 run "4 players" --gbas 4
 run "3 players, level 6" --gbas 3 --level 6
+run "2 players, reactor explosion" --gbas 2 --level 9 --seed 0:4 --seed 1:54 --trace nuked
 run "4 players, pause" --gbas 4 --pause 2:400
 run "4 players, one switched off" --gbas 4 --reset 3:1500 --frames 2000
 run "4 players, out players leave" --gbas 4 --leave 1 --leave 2 --leave 3

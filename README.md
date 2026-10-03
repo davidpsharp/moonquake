@@ -30,7 +30,8 @@ Game Boy with the small purple plug in is player 1 (green): it shows who's conne
 game with START, choosing the level to play on with LEFT and RIGHT first. Green starts bottom
 right, red top left, orange top right and pink bottom left, and it's the normal game with everyone
 dropping bombs: 3 lives each, run out and you're out, last one alive wins. The game stays on that
-level until then, clearing the rubble doesn't end it; a reactor explosion costs everyone a life.
+level until then, clearing the rubble doesn't end it; a reactor explosion ends the match with no
+winner ("GREEN BLEW UP THE REACTOR!"), so play on a lower level if you'd rather not have them.
 
 If you're out of lives you can keep watching, or press SELECT to leave (or just unplug) and the
 others play on. If someone's Game Boy gets unplugged mid-game they're out and the rest carry on.
