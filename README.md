@@ -66,6 +66,15 @@ together and checks the games stay identical frame by frame. It needs libmgba bu
 see the script. `tools/linktest/all.sh` runs the lot: 2-4 players, pausing, a Game Boy being
 switched off, and sending the game by multiboot (that needs a GBA BIOS file).
 
+## licence and credits
+The source code is under the MIT licence, see [LICENSE](LICENSE).
+
+The licence doesn't cover the original game's material: the graphics (`graphics/`), the sound
+samples (`maxmod_data/`) and the story text come from Paul Taylor's Moonquake for Acorn RISC OS,
+(c) 1992 Paul Taylor, and remain his property. The game design is his too.
+
+Built with devkitPro's libgba (LGPL, with an exception for static linking) and maxmod (ISC).
+
 ## changes
 * October 2026 - 2-4 player deathmatch over the link cable, with multiboot so only one Game Boy needs the game.
 * May 2023 - Migrated to latest GBA toolchain (devKitArm) and early experiments with 2-player link play across two linked Game Boys.
