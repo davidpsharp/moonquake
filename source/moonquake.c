@@ -190,6 +190,9 @@ extern const unsigned short credits_Palette[256];
 // time (it was 700, more than twice as long)
 #define HALO_FRAMES 257
 
+// frames each picture of a flame lasts (see checkExplosion())
+#define FLAME_STAGE_FRAMES 5
+
 // define OAM position numbers for characters sprites
 #define OAM_LETTERS             0
 #define OAM_LASTLETTER          99
@@ -1430,14 +1433,21 @@ void nuke()
                 {
                     // every other tile is space
                     drawObject(x,y,T_SPACE_EXPLO_VERT_START);
+                    bombVal[x][y] = 0;
                 }
                 else
                 {
                     // every tile is space
                     if(x & 1)
+                    {
                         drawObject(x,y,T_SPACE_EXPLO_HORIZ_START);
+                        bombVal[x][y] = 0;
+                    }
                     else
+                    {
                         drawObject(x,y,T_SPACE_EXPLO_CENTRE_START);
+                        bombVal[x][y] = 0;
+                    }
                 }
             }
         }
@@ -1756,6 +1766,7 @@ void detonateBomb(u8 x, u8 y)
     // centre piece
     area[x][y] = T_SPACE_EXPLO_CENTRE_START;
     drawObject(x, y, T_SPACE_EXPLO_CENTRE_START);
+    bombVal[x][y] = 0;
     
     int direction;
     // for each of the four directions, left, right, up, down
@@ -1879,12 +1890,14 @@ void detonateBomb(u8 x, u8 y)
                     	// draw end of flame
                         area[nx][ny] = endtile;
                         drawObject(nx, ny, endtile);
+                        bombVal[nx][ny] = 0;
                     }
                     else
                     {
                     	// draw midflame tile
                         area[nx][ny] = midtile;
                         drawObject(nx, ny, midtile);
+                        bombVal[nx][ny] = 0;
                     }
                 }
                 
@@ -1963,16 +1976,14 @@ void checkBomb(u8 x, u8 y)
 // check for incrementing explosions in spaces
 void checkExplosion(u8 x, u8 y)
 {
+    // Each of a flame's 5 pictures lasts FLAME_STAGE_FRAMES, timed by the tile's own counter
+    // (bombVal, free once it's not a bomb), so a flame's deadly for 25 frames, about 0.42s, as
+    // long as in the Acorn original (21 frames at 50Hz; it was 5 frames here). After a reactor
+    // explosion twice as long, the original ran at half speed then.
+    if( ++bombVal[x][y] < (nuked ? FLAME_STAGE_FRAMES * 2 : FLAME_STAGE_FRAMES) )
+        return;
+    bombVal[x][y] = 0;
     
-    if(nuked)
-    {
-        // nukes should blow slower than normal explosions for effect
-        // ??? looking through code, not sure this will have the desired effect though
-        if(universalTimer % 8)
-            return;
-    }
-    
-    //if(!(universalTimer % 2) )
     {
         // move to next stage of explosion
         area[x][y]+=4;
