@@ -1890,10 +1890,10 @@ void moveMan(struct Player* p)
         return;
     }
     
-    // dead men don't move
-    if(p->lifeStatus == DEAD)
+    // dead men don't move, nor can players who are out of a linked game be killed again (their
+    // man stays where he died, so a flame or robot there would kill him over and over)
+    if(p->lifeStatus != ALIVE)
         return;
-    // else alive
         
     // check for collision with explosion
     

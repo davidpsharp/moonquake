@@ -14,7 +14,7 @@ failed=0
 run() {
     name=$1
     shift
-    output=$("$here/run.sh" $seeds $flicker --frames 60000 --trace dropped "$@" 2>&1)
+    output=$("$here/run.sh" $seeds $flicker --frames 60000 --trace dropped --check-board 0 "$@" 2>&1)
     result=$(echo "$output" | grep -E 'IN SYNC|DESYNC|NOTHING|crashed')
     # unless someone's being unplugged, no one should be dropped from the game
     case "$*" in
@@ -25,6 +25,10 @@ run() {
             fi
             ;;
     esac
+    # the board checks: no out player killed again, no rubble or flames from nowhere
+    if echo "$output" | grep -qE 'was out|no flame next to it|screen shows'; then
+        result="$result, but $(echo "$output" | grep -E 'was out|no flame next to it|screen shows' | head -1)"
+    fi
     # the reactor test has to have blown one up (else the random play needs other seeds)
     case "$*" in
         *"--trace nuked"*)
@@ -43,6 +47,7 @@ run "2 players" --gbas 2
 run "3 players" --gbas 3
 run "4 players" --gbas 4
 run "3 players, level 6" --gbas 3 --level 6
+run "3 players, out player in the way of flames" --gbas 3 --level 0 --seed 0:12 --seed 1:112 --seed 2:212
 run "2 players, reactor explosion" --gbas 2 --level 9 --seed 0:4 --seed 1:54 --trace nuked
 run "4 players, pause" --gbas 4 --pause 2:400
 run "4 players, player 3 leaves from the pause menu" --gbas 4 --quit 2:600

@@ -86,6 +86,10 @@ struct Gba {
 	int gameRunningFrames;  // frames since a Gameboy sent the game was seen running it
 	int botAlways;          // random play outside linked games too (after the menus)
 	int ghosts;             // report dead robots whose sprites are on screen
+	int checkBoard;         // report rubble or flames appearing with no flame to cause them
+	uint8_t board[19 * 13]; // the board at the last game frame
+	int haveBoard;
+	int lastStatus[4];
 	FILE* audio;            // sound output, 16 bit stereo
 	long audioSamples;
 	int resetAt;            // video frame to reset this Gameboy at (as if switched off), 0 for never
@@ -154,6 +158,60 @@ struct Dump {
 static struct Dump dumps[32];
 static int numDumps;
 static uint32_t symPlayer, symRobot;
+static uint32_t symArea, symNuked;
+
+// --check-board: each game frame, look for rubble starting to explode, or a flame appearing,
+// with no flame next to it to have caused it, and for the screen's map not matching the board
+#define AX 19
+#define AY 13
+#define IS_FLAME(t) ((t) >= 84 && (t) <= 220)
+#define IS_RUBBLE_EXPLO(t) ((t) >= 52 && (t) <= 80)
+struct Gba;
+static void checkBoard(struct Gba* g, struct mCore* core, int timer) {
+	uint8_t now[AX * AY];
+	for (int i = 0; i < AX * AY; ++i) {
+		now[i] = core->busRead8(core, symArea + i);
+	}
+	int nuked = symNuked ? core->busRead8(core, symNuked) : 0;
+	if (g->haveBoard && !nuked) {
+		for (int x = 0; x < AX; ++x) {
+			for (int y = 0; y < AY; ++y) {
+				uint8_t was = g->board[x * AY + y], is = now[x * AY + y];
+				int newRubble = was == 4 && IS_RUBBLE_EXPLO(is);
+				int newFlame = !IS_FLAME(was) && IS_FLAME(is) && is != 84 && !(was >= 20 && was <= 48);
+				if (!newRubble && !newFlame) {
+					continue;
+				}
+				// something next to it must be a flame (or the bomb's centre) now
+				int ok = 0;
+				static const int d[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+				for (int k = 0; k < 4; ++k) {
+					int nx = x + d[k][0], ny = y + d[k][1];
+					if (nx >= 0 && nx < AX && ny >= 0 && ny < AY && IS_FLAME(now[nx * AY + ny])) {
+						ok = 1;
+					}
+				}
+				if (!ok) {
+					printf("gba%d timer %d: %s at %d,%d (%d -> %d) with no flame next to it\n", g->id, timer,
+					       newRubble ? "rubble exploded" : "flame appeared", x, y, was, is);
+				}
+			}
+		}
+	}
+	// the map on screen (64x32 tiles in two 32x32 blocks) should show the board
+	for (int x = 0; x < AX; ++x) {
+		for (int y = 0; y < AY; ++y) {
+			int tx = x * 2, ty = y * 2;
+			uint32_t addr = 0x06000000 + 2 * (tx < 32 ? ty * 32 + tx : (tx - 32) + ty * 32 + 1024);
+			int tile = core->busRead16(core, addr);
+			if (tile != now[x * AY + y] && !(g->haveBoard && tile == g->board[x * AY + y])) {
+				printf("gba%d timer %d: screen shows tile %d at %d,%d, the board has %d\n", g->id, timer, tile, x, y, now[x * AY + y]);
+			}
+		}
+	}
+	memcpy(g->board, now, sizeof now);
+	g->haveBoard = 1;
+}
 #define PLAYER_SIZE 48          // sizeof(struct Player) in the game
 #define PLAYER_LIFE_STATUS 18   // offsetof(struct Player, lifeStatus)
 #define LIFE_OUT 3
@@ -475,6 +533,17 @@ static void frameCallback(struct mCoreThread* thread) {
 		for (int i = 0; i < 4 * PLAYER_SIZE; ++i) {
 			g->players[timer * 4 * PLAYER_SIZE + i] = core->busRead8(core, symPlayer + i);
 		}
+		if (g->checkBoard) {
+			checkBoard(g, core, timer);
+			// a player who's out stays out
+			for (int i = 0; i < 4; ++i) {
+				int status = core->busRead8(core, symPlayer + i * PLAYER_SIZE + PLAYER_LIFE_STATUS);
+				if (g->lastStatus[i] == LIFE_OUT && status != LIFE_OUT) {
+					printf("gba%d timer %d: player %d was out, now life status %d\n", g->id, timer, i, status);
+				}
+				g->lastStatus[i] = status;
+			}
+		}
 		if (!g->gameFramesDone++) {
 			g->firstGameFrame = frame;
 		} else {
@@ -618,6 +687,7 @@ static void usage(void) {
 	        "  --dump GBA:FRAME:ADDR:LEN:FILE   save memory (hex address and length) to a file\n"
 	        "  --poke GBA:FRAME:ADDR:VALUE   write a byte (hex address and value) at that frame\n"
 	        "  --bot GBA              random play in single player games too\n"
+	        "  --check-board GBA      report rubble or flames appearing from nowhere (needs area)\n"
 	        "  --ghosts GBA           report dead robots whose sprites are on screen (needs robot)\n"
 	        "  --audio GBA:FILE       save the sound as raw 16 bit stereo\n"
 	        "  --unplug GBA:FRAME     pull a Gameboy's cable out at that frame (use the last\n"
@@ -690,6 +760,9 @@ int main(int argc, char** argv) {
 			++i;
 		} else if (!strcmp(a, "--bot") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
 			gba[n].botAlways = 1;
+			++i;
+		} else if (!strcmp(a, "--check-board") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].checkBoard = 1;
 			++i;
 		} else if (!strcmp(a, "--ghosts") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
 			gba[n].ghosts = 1;
@@ -772,6 +845,8 @@ int main(int argc, char** argv) {
 	symTimer = symAddr("universalTimer");
 	symLinked = symAddr("linked");
 	symPlayer = symAddr("player");
+	symArea = symAddr("area");
+	symNuked = symAddr("nuked");
 	symRobot = symAddr("robot");
 	symMatchOver = symAddr("matchOver");
 	if (!symFrameDone || !symTimer || !symLinked || !symMatchOver) {
