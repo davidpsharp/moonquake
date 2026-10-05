@@ -3907,8 +3907,25 @@ void waitingMessage(const char* line1, const char* line2, const char* line3)
     writeText(-1, 130, "PRESS B TO CANCEL", &spriteNum);
 }
 
+// player 1's level choice on the waiting screen: presses of left and right (counted while
+// looking for Gameboys to send the game to too, which takes a moment, so none are missed)
+static bool dpadReleased;
+static int levelSteps;
+
+void checkLevelKeys(void)
+{
+    if( !KEY_DOWN( KEYLEFT ) && !KEY_DOWN( KEYRIGHT ) )
+        dpadReleased = TRUE;
+    else if( dpadReleased )
+    {
+        dpadReleased = FALSE;
+        levelSteps += KEY_DOWN( KEYRIGHT ) ? 1 : -1;
+    }
+}
+
 bool bPressed(void)
 {
+    checkLevelKeys();
     return KEY_DOWN( KEYB );
 }
 
@@ -4025,6 +4042,8 @@ u8 waitForPlayers(u8* chosenLevel)
     for(i=0; i<256; i++) OBJPaletteMem[i] = spritePalette[i];
     
     linkStart();
+    levelSteps = 0;
+    dpadReleased = FALSE;   // (a key held from the menu doesn't count)
     
     u8 playing = 0;
     int shownMask = -1;
@@ -4087,13 +4106,11 @@ u8 waitForPlayers(u8* chosenLevel)
         }
         
         // left and right choose the level to play on
-        static bool dpadReleased;
-        if( !KEY_DOWN( KEYLEFT ) && !KEY_DOWN( KEYRIGHT ) )
-            dpadReleased = TRUE;
-        else if( dpadReleased )
+        checkLevelKeys();
+        if( levelSteps )
         {
-            dpadReleased = FALSE;
-            level = ( level + (KEY_DOWN( KEYRIGHT ) ? 1 : NUM_LEVELS - 1) ) % NUM_LEVELS;
+            level = ( level + NUM_LEVELS * 4 + levelSteps ) % NUM_LEVELS;
+            levelSteps = 0;
             menuBlip();
             showLevelChoice(level);
         }

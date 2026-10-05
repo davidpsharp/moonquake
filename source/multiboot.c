@@ -44,6 +44,12 @@
 
 // how long to wait for a transfer before giving up on it, in scanlines (about 4 frames)
 #define TRANSFER_TIMEOUT        (228 * 4)
+// and while just looking for Gameboys waiting for the game, so that looking (every couple of
+// seconds on the waiting screen) doesn't hold things up when one on the cable isn't ready: a
+// transfer takes well under a scanline (about 1ms is 16)
+#define DETECTION_TIMEOUT       16
+
+static u32 transferTimeout = TRANSFER_TIMEOUT;
 
 extern u8 __boot_method;     // in the cartridge header, set by the BIOS when multibooted
 extern u8 __ewram_overlay_lma[];  // end of the image (the EWRAM overlays aren't used),
@@ -98,7 +104,7 @@ static bool waitWhileBusy(void)
         if( REG_VCOUNT != vcount )
         {
             vcount = REG_VCOUNT;
-            if( ++lines > TRANSFER_TIMEOUT )
+            if( ++lines > transferTimeout )
             {
                 // never finished (not every Gameboy on the cable ready?), start afresh
                 multiplayerMode();
@@ -254,7 +260,9 @@ int multibootSend(bool (*cancel)(void), void (*found)(void))
     // the length must be a multiple of 16
     mp.boot_endp = (u8*)EWRAM + ((((u32)__ewram_overlay_lma - EWRAM) + 15) & ~15);
 
+    transferTimeout = DETECTION_TIMEOUT;
     TRY( detectClients(&mp) )
+    transferTimeout = TRANSFER_TIMEOUT;
     if( found )
         found();
     TRY( compare(&mp, CONFIRM_CLIENTS | mp.client_bit, HANDSHAKE_RESPONSE) )
@@ -279,6 +287,7 @@ int multibootSend(bool (*cancel)(void), void (*found)(void))
     REG_IME = ime;
 
 finished:
+    transferTimeout = TRANSFER_TIMEOUT;
     generalPurposeMode();
 
     switch(result)
