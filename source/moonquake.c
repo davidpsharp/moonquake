@@ -540,7 +540,7 @@ void copyGameOAM(void)
         
 	u16 loop;
 	u16* temp = (u16*)sprites;
-	u16* oamTemp = OAM;
+	u16* oamTemp = (u16*)OAM;
 	
 	// ??? check this optimised properly, can we reduce the number of sprites copied
 	const int spriteNumToCopyFrom = 100;
@@ -563,7 +563,7 @@ void copyAllOAM(void)
 {
 	u16 loop;
 	u16* temp = (u16*)sprites;
-	u16* oamTemp = OAM;
+	u16* oamTemp = (u16*)OAM;
 	
 	for(loop = 0; loop < 128*4; loop++)
 	{
@@ -576,7 +576,7 @@ void copySelectOAM(int start, int end)
 {   
 	u16 loop;
 	u16* temp = (u16*)sprites;
-	u16* oamTemp = OAM;
+	u16* oamTemp = (u16*)OAM;
 	
 	for(loop = start*4; loop < (end+1)*4; loop++)
 	{
@@ -588,7 +588,7 @@ void copySelectOAM(int start, int end)
 void copySingleOAM(int spriteNum)
 {
     // 16 bit quantities
-    u16* oamTemp = OAM + (spriteNum*4);
+    u16* oamTemp = (u16*)OAM + (spriteNum*4);
     u16* temp = ((u16*)sprites) + (spriteNum*4);
     
     // unrolled loop for single case
