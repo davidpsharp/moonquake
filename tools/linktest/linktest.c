@@ -85,6 +85,7 @@ struct Gba {
 	int gameLoaded;
 	int gameRunningFrames;  // frames since a Gameboy sent the game was seen running it
 	int botAlways;          // random play outside linked games too (after the menus)
+	int idle;               // no random play: the player stands still
 	int ghosts;             // report dead robots whose sprites are on screen
 	int checkBoard;         // report rubble or flames appearing with no flame to cause them
 	uint8_t board[19 * 13]; // the board at the last game frame
@@ -147,6 +148,7 @@ static int siFlicker;   // make the other Gameboys' SI bit read low at random, a
 struct Poke {
 	int gba, frame;
 	uint32_t addr, value;
+	int gameFrame;          // frame is a game frame (universalTimer), on every Gameboy
 };
 static struct Poke pokes[32];
 static int numPokes;
@@ -204,7 +206,12 @@ static void checkBoard(struct Gba* g, struct mCore* core, int timer) {
 			int tx = x * 2, ty = y * 2;
 			uint32_t addr = 0x06000000 + 2 * (tx < 32 ? ty * 32 + tx : (tx - 32) + ty * 32 + 1024);
 			int tile = core->busRead16(core, addr);
-			if (tile != now[x * AY + y] && !(g->haveBoard && tile == g->board[x * AY + y])) {
+			// (a tile changed by --poke-game is drawn when the game next changes it)
+			int poked = 0;
+			for (int i = 0; i < numPokes; ++i) {
+				poked |= pokes[i].gameFrame && pokes[i].addr == symArea + x * AY + y;
+			}
+			if (!poked && tile != now[x * AY + y] && !(g->haveBoard && tile == g->board[x * AY + y])) {
 				printf("gba%d timer %d: screen shows tile %d at %d,%d, the board has %d\n", g->id, timer, tile, x, y, now[x * AY + y]);
 			}
 		}
@@ -418,7 +425,7 @@ static void frameCallback(struct mCoreThread* thread) {
 	}
 
 	for (int i = 0; i < numPokes; ++i) {
-		if (pokes[i].gba == g->id && pokes[i].frame == frame) {
+		if (!pokes[i].gameFrame && pokes[i].gba == g->id && pokes[i].frame == frame) {
 			core->busWrite8(core, pokes[i].addr, pokes[i].value);
 		}
 	}
@@ -500,8 +507,10 @@ static void frameCallback(struct mCoreThread* thread) {
 			core->setKeys(core, 0);
 			return;
 		}
-		if (waiting >= lobbyPlayers && g->lobbyRights < lobbyLevel * 8) {
-			// choose the level: tap right (pressed 4 frames, let go 4)
+		if ((waiting >= lobbyPlayers || g->lobbyRights) && g->lobbyRights < lobbyLevel * 8) {
+			// choose the level: tap right (pressed 4 frames, let go 4), all the taps once
+			// started (the count of who's waiting can drop for a moment while player 1 looks
+			// for Gameboys to send the game to, and letting go mid tap would make it two)
 			core->setKeys(core, (g->lobbyRights++ % 8) < 4 ? KEY_RIGHT : 0);
 			return;
 		}
@@ -532,6 +541,12 @@ static void frameCallback(struct mCoreThread* thread) {
 		g->seen[timer] = 1;
 		for (int i = 0; i < 4 * PLAYER_SIZE; ++i) {
 			g->players[timer * 4 * PLAYER_SIZE + i] = core->busRead8(core, symPlayer + i);
+		}
+		// game state changes for every Gameboy, at the end of the same game frame
+		for (int i = 0; i < numPokes; ++i) {
+			if (pokes[i].gameFrame && pokes[i].frame == timer) {
+				core->busWrite8(core, pokes[i].addr, pokes[i].value);
+			}
 		}
 		if (g->checkBoard) {
 			checkBoard(g, core, timer);
@@ -584,7 +599,7 @@ static void frameCallback(struct mCoreThread* thread) {
 		}
 	}
 
-	if ((inGame || (g->botAlways && frame > 700)) && !matchOver) {
+	if ((inGame || (g->botAlways && frame > 700)) && !matchOver && !g->idle) {
 		// random play: hold a direction for a while, sometimes drop a bomb
 		if (g->botHold-- <= 0) {
 			static const int dirs[] = { 0, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT };
@@ -685,7 +700,9 @@ static void usage(void) {
 	        "  --leave GBA            tap select in the game, so leave once out of it\n"
 	        "  --unplug-out GBA       pull a Gameboy's cable out once its player's out of the game\n"
 	        "  --dump GBA:FRAME:ADDR:LEN:FILE   save memory (hex address and length) to a file\n"
+	        "  --poke-game TIMER:ADDR:VALUE   write a byte on every Gameboy at the end of that game frame\n"
 	        "  --poke GBA:FRAME:ADDR:VALUE   write a byte (hex address and value) at that frame\n"
+	        "  --idle GBA             no random play, the player stands still\n"
 	        "  --bot GBA              random play in single player games too\n"
 	        "  --check-board GBA      report rubble or flames appearing from nowhere (needs area)\n"
 	        "  --ghosts GBA           report dead robots whose sprites are on screen (needs robot)\n"
@@ -752,11 +769,21 @@ int main(int argc, char** argv) {
 				usage();
 			}
 			++i;
+		} else if (!strcmp(a, "--poke-game") && v && numPokes < 32) {
+			struct Poke* pk = &pokes[numPokes++];
+			pk->gameFrame = 1;
+			if (sscanf(v, "%d:%x:%x", &pk->frame, &pk->addr, &pk->value) != 3) {
+				usage();
+			}
+			++i;
 		} else if (!strcmp(a, "--poke") && v && numPokes < 32) {
 			struct Poke* pk = &pokes[numPokes++];
 			if (sscanf(v, "%d:%d:%x:%x", &pk->gba, &pk->frame, &pk->addr, &pk->value) != 4) {
 				usage();
 			}
+			++i;
+		} else if (!strcmp(a, "--idle") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
+			gba[n].idle = 1;
 			++i;
 		} else if (!strcmp(a, "--bot") && v && (n = atoi(v)) < MAX_GBAS_TESTED) {
 			gba[n].botAlways = 1;

@@ -29,7 +29,7 @@ run() {
     if echo "$output" | grep -qE 'was out|no flame next to it|screen shows'; then
         result="$result, but $(echo "$output" | grep -E 'was out|no flame next to it|screen shows' | head -1)"
     fi
-    # the reactor test has to have blown one up (else the random play needs other seeds)
+    # the reactor test has to have blown one up
     case "$*" in
         *"--trace nuked"*)
             echo "$output" | grep -q 'nuked = 1' || result="$result, but no reactor went off"
@@ -48,14 +48,15 @@ run "3 players" --gbas 3
 run "4 players" --gbas 4
 run "3 players, level 6" --gbas 3 --level 6
 run "3 players, out player in the way of flames" --gbas 3 --level 0 --seed 0:12 --seed 1:112 --seed 2:212
-# (the linked Gameboys' timing varies from run to run, so the random play does too: try a few
-# seeds until one blows up a reactor)
-for s in 2 4 6 8 10 12 14 16; do
-    reactor=$(run "2 players, reactor explosion" --gbas 2 --level 9 --seed 0:$s --seed 1:$((s + 50)) --trace nuked)
-    case "$reactor" in *"no reactor"*) ;; *) break ;; esac
-done
-echo "$reactor"
-case "$reactor" in *": IN SYNC") ;; *) failed=1 ;; esac
+# a reactor explosion: on level 4, with one reactor that goes off with one hit at 9,6, put
+# one of red's bombs about to go off next to it at 8,6 (area[8][6], 8 * 13 + 6 bytes in), with
+# the players standing still so that nothing (a death) gets in the way
+elf=${ELF:-$(cd "$here/../.." && pwd)/moonquake.elf}
+addr() {
+    printf %x $(( 0x$("${DEVKITARM:-/opt/devkitpro/devkitARM}/bin/arm-none-eabi-nm" "$elf" | awk -v n="$1" '$3 == n { print $1 }') + 8 * 13 + 6 ))
+}
+run "2 players, reactor explosion" --gbas 2 --level 4 --idle 0 --idle 1 --trace nuked \
+    --poke-game 200:$(addr area):18 --poke-game 200:$(addr bombVal):1 --poke-game 200:$(addr bombOwner):1
 run "4 players, pause" --gbas 4 --pause 2:400
 run "4 players, player 3 leaves from the pause menu" --gbas 4 --quit 2:600
 run "4 players, player 1 leaves (ending it)" --gbas 4 --quit 0:600

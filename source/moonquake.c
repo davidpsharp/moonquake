@@ -852,6 +852,10 @@ void writeVersion(u32* spriteNum)
 
 
 // write text out printed letter by letter with sound fx
+// called a frame at a time while writeText() types a message out (so a screen can still read
+// buttons, see waitForPlayers())
+void (*textIdle)(void);
+
 int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
 {
     u32 tempSpriteNum = *spriteNum;
@@ -882,6 +886,8 @@ int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
 
         wait();
         copyAllOAM();
+        if(textIdle)
+            textIdle();
     }
     
     // turn off teletype at end of string
@@ -4075,6 +4081,7 @@ u8 waitForPlayers(u8* chosenLevel)
     linkStart();
     levelSteps = 0;
     dpadReleased = FALSE;   // (a key held from the menu doesn't count)
+    textIdle = checkLevelKeys;  // and while the screen's being written
     
     u8 playing = 0;
     int shownMask = -1;
@@ -4201,6 +4208,7 @@ u8 waitForPlayers(u8* chosenLevel)
         }
     }
     
+    textIdle = NULL;
     fadeToBlack();
     turnOffAllSprites();
     copyAllOAM();
