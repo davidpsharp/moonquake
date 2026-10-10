@@ -74,6 +74,12 @@ version tag makes a release with the ROM attached, once the tests pass:
 
     git tag -a v0.9.2 -m "v0.9.2" && git push origin v0.9.2
 
+GitHub builds in the `devkitpro/devkitarm` Docker image, pinned by digest in the workflow so the
+compiler only changes when the pin does. `tools/build-ci.sh` builds locally in that same image
+(with Docker running), whatever devkitPro you have installed; `tools/build-ci.sh --version` shows
+its compiler and library versions. It builds from clean, so a plain `make` afterwards rebuilds
+everything with your own toolchain.
+
 `tools/linktest/run.sh` plays random two player games between two emulated Game Boys linked
 together and checks the games stay identical frame by frame. It needs libmgba built from source,
 see the script. `tools/linktest/all.sh` runs the lot: 2-4 players, pausing, a Game Boy being
