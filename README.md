@@ -13,6 +13,8 @@ Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
 
 [Homepage](https://davidsharp.com/gba/)
 
+Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releases).
+
 ## cheat for testing
 On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Until the Game Boy's
 switched off, START GAME then asks which level to start on; SELECT there plays each sound effect in
@@ -61,8 +63,15 @@ ready to play. Game Boys with and without cartridges can be mixed.
 With devkitPro (devkitARM, libgba, maxmod) installed: `make`. That makes `moonquake.gba`, and a
 copy named after the version, e.g. `moonquake-v0_9_1.gba`. The version comes from git: the last
 tag, plus how many commits since it if there are any (`v0.9.1-2-g1a2b3c4`), and `-dirty` if built
-with changes not yet committed. It's shown in the bottom right of the credits screen, before the title. The game is linked to run from
-EWRAM so it can send itself by multiboot; started from a cartridge it copies itself there first.
+with changes not yet committed. It's shown in the bottom right of the credits screen, before the
+title. The game is linked to run from EWRAM so it can send itself by multiboot; started from a
+cartridge it copies itself there first.
+
+GitHub Actions builds it too (`.github/workflows/build.yml`), on every push to main or by hand
+from the Actions tab ("Run workflow"); the ROM's kept on each run's page. Pushing a version tag
+makes a release with the ROM attached:
+
+    git tag -a v0.9.2 -m "v0.9.2" && git push origin v0.9.2
 
 `tools/linktest/run.sh` plays random two player games between two emulated Game Boys linked
 together and checks the games stay identical frame by frame. It needs libmgba built from source,

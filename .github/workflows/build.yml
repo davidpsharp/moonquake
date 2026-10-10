@@ -1,0 +1,40 @@
+# Build the ROM. Run it by hand from the Actions tab ("Run workflow"), and it runs on every
+# push to main. Each run keeps the ROM as an artifact (on the run's page). Pushing a version
+# tag, e.g. v0.9.2, also makes a GitHub release with the ROM attached.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write     # to make releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # all the history and tags, for the version (git describe)
+
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make
+          ls -l moonquake*.gba
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moonquake
+          path: moonquake-*.gba
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: moonquake-*.gba
+          generate_release_notes: true

@@ -3,9 +3,8 @@
 *.sav
 # save file from a second emulated GBA when doing multi-link testing
 *.sa2
-# *.gba # will publish ROM image until I have proper build pipeline setup
-# the same ROM copied to a file named after its version (see the Makefile)
-moonquake-*.gba
+# ROMs: built by GitHub Actions and attached to the releases (.github/workflows/build.yml)
+*.gba
 .build/
 
 # MaxMod generated files at Make time
