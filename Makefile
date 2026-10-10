@@ -21,6 +21,12 @@ include $(DEVKITARM)/gba_rules
 #
 #---------------------------------------------------------------------------------
 TARGET		:= $(notdir $(CURDIR))
+
+# the version, from git: the last tag (v0.9.1), plus how many commits since it and the latest
+# one's id (v0.9.1-2-g1a2b3c4), and -dirty if there are changes not yet committed. It's shown
+# on the title screen, and the ROM's also copied to a file named after it, moonquake-v0_9_1.gba
+VERSION		:= $(shell git describe --tags --dirty 2>/dev/null || echo unknown)
+VERSIONED	:= $(TARGET)-$(subst .,_,$(VERSION)).gba
 BUILD		:= build
 SOURCES		:= source
 INCLUDES	:= include
@@ -128,12 +134,16 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 #---------------------------------------------------------------------------------
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
+	@echo '#define VERSION "$(VERSION)"' > $@/version.h.new
+	@cmp -s $@/version.h.new $@/version.h && rm $@/version.h.new || mv $@/version.h.new $@/version.h
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+	@cp $(TARGET).gba $(VERSIONED)
+	@echo built $(VERSIONED)
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).elf $(TARGET).gba
+	@rm -fr $(BUILD) $(TARGET).elf $(TARGET).gba $(TARGET)-*.gba
 
 
 #---------------------------------------------------------------------------------

@@ -48,6 +48,7 @@
 #include "link.h"
 #include "multiboot.h"
 #include "lz77.h"
+#include "version.h"     // VERSION, made by the Makefile from git
 #include "savegame.h"
  
 
@@ -723,6 +724,12 @@ int getTextWidth(const char* text)
             case ','    : x += charWidth[38]; break;
             case ':'    : x += charWidth[39]; break;
             case '/'    : x += charWidth[40]; break;
+            case '('    : x += charWidth[42]; break;
+            case ')'    : x += charWidth[43]; break;
+            case '-'    : x += charWidth[44]; break;
+            case '?'    : x += charWidth[45]; break;
+            case '!'    : x += charWidth[46]; break;
+            case '&'    : x += charWidth[47]; break;
         }
     }
     
@@ -819,6 +826,30 @@ int writeTextImmediately(s16 x, u16 y, const char* text, u32* spriteNum, int num
     // return final X value in case it's of interest for continuing text
     return x;
 }
+
+// the version in the bottom right corner, without the commit's id (v0.9.1, or v0.9.1-2 two
+// commits on, -dirty if built with changes not yet committed)
+void writeVersion(u32* spriteNum)
+{
+    char version[24];
+    const char* from = VERSION;
+    char* to = version;
+    while( *from && to < version + sizeof(version) - 1 )
+    {
+        if( '-' == from[0] && 'g' == from[1] )
+        {
+            // skip "-g" and the id
+            from += 2;
+            while( (*from >= '0' && *from <= '9') || (*from >= 'a' && *from <= 'f') )
+                from++;
+            continue;
+        }
+        *to++ = *from++;
+    }
+    *to = 0;
+    writeTextImmediately(DISPLAY_WIDTH - 6 - getTextWidth(version), 142, version, spriteNum, -1);
+}
+
 
 // write text out printed letter by letter with sound fx
 int writeText(s16 x, u16 y, const char* text, u32* spriteNum)
@@ -4459,6 +4490,7 @@ int main(void)
         writeText(-1, 50, "ORIGINAL AND GRAPHICS:", &spriteNum);
         writeText(-1, 70, "PAUL TAYLOR", &spriteNum);
         writeText(-1, 120, "WWW.DAVIDSHARP.COM/GBA", &spriteNum);
+        writeVersion(&spriteNum);
         
         
         copyAllOAM();

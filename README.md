@@ -58,7 +58,10 @@ game over the cable (it takes around half a minute for one, longer for three) an
 ready to play. Game Boys with and without cartridges can be mixed.
 
 ## building
-With devkitPro (devkitARM, libgba, maxmod) installed: `make`. The game is linked to run from
+With devkitPro (devkitARM, libgba, maxmod) installed: `make`. That makes `moonquake.gba`, and a
+copy named after the version, e.g. `moonquake-v0_9_1.gba`. The version comes from git: the last
+tag, plus how many commits since it if there are any (`v0.9.1-2-g1a2b3c4`), and `-dirty` if built
+with changes not yet committed. It's shown in the bottom right of the credits screen, before the title. The game is linked to run from
 EWRAM so it can send itself by multiboot; started from a cartridge it copies itself there first.
 
 `tools/linktest/run.sh` plays random two player games between two emulated Game Boys linked
