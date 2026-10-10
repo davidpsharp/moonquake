@@ -50,7 +50,7 @@ run "3 players, level 6" --gbas 3 --level 6
 run "3 players, out player in the way of flames" --gbas 3 --level 0 --seed 0:12 --seed 1:112 --seed 2:212
 # (the linked Gameboys' timing varies from run to run, so the random play does too: try a few
 # seeds until one blows up a reactor)
-for s in 2 4 6 8; do
+for s in 2 4 6 8 10 12 14 16; do
     reactor=$(run "2 players, reactor explosion" --gbas 2 --level 9 --seed 0:$s --seed 1:$((s + 50)) --trace nuked)
     case "$reactor" in *"no reactor"*) ;; *) break ;; esac
 done

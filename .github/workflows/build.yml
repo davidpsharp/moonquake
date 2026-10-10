@@ -1,6 +1,15 @@
-# Build the ROM. Run it by hand from the Actions tab ("Run workflow"), and it runs on every
-# push to main. Each run keeps the ROM as an artifact (on the run's page). Pushing a version
-# tag, e.g. v0.9.2, also makes a GitHub release with the ROM attached.
+# Build the ROM, then play test it: tools/linktest/all.sh plays linked 2-4 player games in
+# mGBA and checks they stay identical. Run it by hand from the Actions tab ("Run workflow"), and
+# it runs on every push to main. Each run keeps the ROM as an artifact (on the run's page).
+# Pushing a version tag, e.g. v0.9.2, also makes a GitHub release with the ROM attached, once
+# the tests have passed.
+#
+# The multiboot tests need a GBA BIOS, which can't go in the repository. Keep it as a secret
+# instead (Settings > Secrets and variables > Actions), base64 encoded:
+#
+#   base64 -i ~/gba/gba_bios.bin | gh secret set GBA_BIOS
+#
+# Without it those tests are skipped.
 name: Build
 
 on:
@@ -11,6 +20,9 @@ on:
 
 permissions:
   contents: write     # to make releases
+
+env:
+  MGBA_VERSION: 0.10.2
 
 jobs:
   build:
@@ -32,9 +44,70 @@ jobs:
           name: moonquake
           path: moonquake-*.gba
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      # and the ELF, which the tests read the game's variables from
+      - uses: actions/upload-artifact@v4
+        with:
+          name: for-tests
+          path: |
+            moonquake.gba
+            moonquake.elf
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: for-tests
+          path: rom
+
+      - name: Install tools
+        run: sudo apt-get install -y -qq cmake binutils-arm-none-eabi
+
+      - uses: actions/cache@v4
+        id: mgba
+        with:
+          path: mgba
+          key: mgba-${{ env.MGBA_VERSION }}-${{ runner.os }}-1
+
+      - name: Build libmgba
+        if: steps.mgba.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --depth 1 --branch "$MGBA_VERSION" https://github.com/mgba-emu/mgba.git mgba
+          mkdir mgba/build-lib && cd mgba/build-lib
+          cmake .. -DBUILD_STATIC=ON -DBUILD_SHARED=OFF -DBUILD_QT=OFF -DBUILD_SDL=OFF \
+            -DM_CORE_GB=OFF -DUSE_LUA=OFF -DENABLE_SCRIPTING=OFF -DUSE_ZLIB=OFF -DUSE_PNG=OFF \
+            -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_SQLITE3=OFF -DUSE_ELF=OFF -DUSE_LZMA=OFF \
+            -DUSE_FFMPEG=OFF -DUSE_EDITLINE=OFF -DUSE_DISCORD_RPC=OFF -DUSE_EPOXY=OFF \
+            -DUSE_GDB_STUB=OFF -DUSE_DEBUGGERS=OFF -DBUILD_LTO=OFF
+          make -j4
+
+      - name: BIOS for the multiboot tests
+        env:
+          GBA_BIOS: ${{ secrets.GBA_BIOS }}
+        run: |
+          if [ -n "$GBA_BIOS" ]; then echo "$GBA_BIOS" | base64 -d > "$RUNNER_TEMP/gba_bios.bin"; fi
+
+      - name: Link tests
+        env:
+          MGBA: ${{ github.workspace }}/mgba
+          DEVKITARM: /usr          # for arm-none-eabi-nm
+          ROM: ${{ github.workspace }}/rom/moonquake.gba
+          ELF: ${{ github.workspace }}/rom/moonquake.elf
+        run: tools/linktest/all.sh "$RUNNER_TEMP/gba_bios.bin"
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: moonquake
+
+      - uses: softprops/action-gh-release@v2
         with:
           files: moonquake-*.gba
           generate_release_notes: true

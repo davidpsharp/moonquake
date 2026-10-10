@@ -68,8 +68,9 @@ title. The game is linked to run from EWRAM so it can send itself by multiboot; 
 cartridge it copies itself there first.
 
 GitHub Actions builds it too (`.github/workflows/build.yml`), on every push to main or by hand
-from the Actions tab ("Run workflow"); the ROM's kept on each run's page. Pushing a version tag
-makes a release with the ROM attached:
+from the Actions tab ("Run workflow"), and runs the link tests on it; the ROM's kept on each
+run's page. The multiboot tests need a GBA BIOS, kept as a secret (see the workflow). Pushing a
+version tag makes a release with the ROM attached, once the tests pass:
 
     git tag -a v0.9.2 -m "v0.9.2" && git push origin v0.9.2
 
