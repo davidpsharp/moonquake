@@ -310,6 +310,7 @@ struct Player
     int lives;
     u8 input;               // controller input this frame, IN_ bits from link.h
     bool inGame;
+    bool bombHeld;          // A or B still held from dismissing a message: no bomb until let go
     const u16* recoloured;  // for colours with no sprites of their own, frames made at startup
     u16 streamChar;         // and the sprite character the current frame is copied to
     const u16* streamFrame; // frame to copy there at the next vblank
@@ -1605,10 +1606,23 @@ void pauseActivated(int pauser)
     // return to main game loop
 }
 
+// a button pressed to get past a message (lives left, get ready...) mustn't drop a bomb as play
+// carries on: no player drops one until they've let go of A and B (part of the game state, from
+// the inputs the Gameboys share, so they all agree in a linked game)
+void ignoreHeldBombKeys(void)
+{
+    int i;
+    for(i=0; i<MAX_PLAYERS; i++)
+        player[i].bombHeld = TRUE;
+}
+
 // act on a player's input for movement and dropping bombs
 void checkInGameKeyPresses(int playerNum)
 {
     struct Player* p = &player[playerNum];
+    
+    if( !(p->input & IN_BOMB) )
+        p->bombHeld = FALSE;
     
     // dead men don't move
     if(p->lifeStatus != ALIVE)
@@ -1622,7 +1636,7 @@ void checkInGameKeyPresses(int playerNum)
         s8 manTileY = p->y / 16;
     
     	// if player wants to drop a bomb or they automatically drop a bomb at the moment
-        if( (p->input & IN_BOMB) || p->autoPlantBombs)
+        if( ((p->input & IN_BOMB) && !p->bombHeld) || p->autoPlantBombs)
         {
         	// if the user can drop bombs on this tile then
             if( area[manTileX][manTileY] == T_SPACE)
@@ -3102,6 +3116,7 @@ int handleDeath(void)
         writeText(-1, 80, "GET READY", &spriteNum);
                             
         delayOrKeypress(120);
+        ignoreHeldBombKeys();
         
         // remove lives banner etc and return to game loop
         int letCount;
@@ -3388,6 +3403,7 @@ int handleLinkedDeaths(u8 unplugged)
         numLines = 0 == localPlayer ? 2 : 3;
     }
     showGameBanner(lines, numLines);
+    ignoreHeldBombKeys();
     
     // as in a single player game, the dead come back to life where they died with a halo
     robotsHalt = FALSE;
@@ -3491,6 +3507,9 @@ void collectGift(struct Player* p)
 void gameLoop(void)
 {
     int i;
+    
+    // (play starts after a message, "GET READY" and the like)
+    ignoreHeldBombKeys();
     
     // infinite loop
     for( ; ; )
