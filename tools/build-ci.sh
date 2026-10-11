@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds the ROM with exactly the toolchain GitHub uses: the devkitpro/devkitarm
 # Docker image pinned in .github/workflows/build.yml. Needs Docker running.
-# Starts clean (as GitHub does), so the next native make rebuilds everything.
+# Starts clean (as GitHub does) and removes build/ after, so the next native make rebuilds
+# everything rather than mixing in these objects.
 #   tools/build-ci.sh            build
 #   tools/build-ci.sh --version  show the toolchain versions
 set -e
@@ -15,4 +16,4 @@ if [ "$1" = --version ]; then
         dkp-pacman -Q | grep -E "^(devkitARM|libgba|maxmod-gba|gba-tools|grit) "'
     exit
 fi
-$RUN sh -c 'git config --global --add safe.directory /src/moonquake && make clean && make'
+$RUN sh -c 'git config --global --add safe.directory /src/moonquake && make clean && make && rm -rf build'
