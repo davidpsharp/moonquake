@@ -44,42 +44,6 @@ death, and the result. Last: a reactor explosion in a single player game on leve
 * The original includes a 2 player battle mode. Acorn machines were in wide use in UK
   schools at the time, and the game was distributed widely in that setting.
 
-## conversion
-The 2004 conversion (v0.1.0 and v0.1.1):
-* **Code:** reimplemented in C. The routines that determine gameplay behaviour, robot AI and
-  level generation, were translated directly from the RISC OS version's ARM assembly so that the
-  behaviour is identical. The remaining code was written new to reproduce the original's behaviour.
-* **Assets:** graphics and sound samples were extracted from the original unmodified.
-* **Sound:** sample playback used Richard Heasman's routines from his GBA conversion of Defender,
-  without modification.
-* **Hardware testing:** tested on a GBA SP with an XG Flash rewritable cartridge.
-* **Single player only:** the 2004 conversion did not include the 2 player mode. Link cable
-  communication and multiboot were outside the scope of that release.
-
-From 2023 the code was moved to the devkitARM toolchain, libgba and the maxmod sound library. The
-2026 enhancements were developed with Claude AI:
-* **Lockstep link protocol:**
-  * The master starts a multiplayer-mode serial transfer about every 1 ms from a timer
-    interrupt (16 × 1024 CPU cycles). Each transfer carries one 16-bit word from every unit to
-    all the others.
-  * A game word holds a 2-bit frame number, the 6-bit input for that frame, and the input for
-    the previous frame.
-  * A unit does not advance to frame n+1 until it has every other player's input for frame n.
-    Units therefore never differ by more than one frame, and the game state is identical on all
-    units because it is computed from the same inputs.
-* **Dropouts:** the master detects a disconnected unit and broadcasts its removal as a reserved
-  input value (up and down together, which a player cannot press) in place of its own input for
-  the stalled frame. All units therefore drop the player at the same frame.
-* **Multiboot:**
-  * The game is linked to execute from the 256 KB EWRAM. When started from a cartridge it copies
-    itself there first.
-  * The ROM image is about 200 KB, which leaves room for the game's working data. Graphics are
-    stored LZ77-compressed and are unpacked into VRAM by the game, not by the BIOS.
-  * Transfer to one client takes about 30 s, and longer for three.
-* **Verification:** `tools/linktest` runs 2-4 emulated GBAs (libmgba) on an emulated link cable.
-  It hashes the game state on every unit every frame and compares the hashes to detect
-  divergence, and checks the board for flames or rubble with no adjacent flame.
-
 ## cheat for testing
 On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Until the Game Boy's
 switched off, START GAME then asks which level to start on; SELECT there plays each sound effect in
@@ -149,6 +113,42 @@ everything with your own toolchain.
 together and checks the games stay identical frame by frame. It needs libmgba built from source,
 see the script. `tools/linktest/all.sh` runs the lot: 2-4 players, pausing, a Game Boy being
 switched off, and sending the game by multiboot (that needs a GBA BIOS file).
+
+## conversion
+The 2004 conversion (v0.1.0 and v0.1.1):
+* **Code:** reimplemented in C. The routines that determine gameplay behaviour, robot AI and
+  level generation, were translated directly from the RISC OS version's ARM assembly so that the
+  behaviour is identical. The remaining code was written new to reproduce the original's behaviour.
+* **Assets:** graphics and sound samples were extracted from the original unmodified.
+* **Sound:** sample playback used Richard Heasman's routines from his GBA conversion of Defender,
+  without modification.
+* **Hardware testing:** tested on a GBA SP with an XG Flash rewritable cartridge.
+* **Single player only:** the 2004 conversion did not include the 2 player mode. Link cable
+  communication and multiboot were outside the scope of that release.
+
+From 2023 the code was moved to the devkitARM toolchain, libgba and the maxmod sound library. The
+2026 enhancements were developed with Claude AI:
+* **Lockstep link protocol:**
+  * The master starts a multiplayer-mode serial transfer about every 1 ms from a timer
+    interrupt (16 × 1024 CPU cycles). Each transfer carries one 16-bit word from every unit to
+    all the others.
+  * A game word holds a 2-bit frame number, the 6-bit input for that frame, and the input for
+    the previous frame.
+  * A unit does not advance to frame n+1 until it has every other player's input for frame n.
+    Units therefore never differ by more than one frame, and the game state is identical on all
+    units because it is computed from the same inputs.
+* **Dropouts:** the master detects a disconnected unit and broadcasts its removal as a reserved
+  input value (up and down together, which a player cannot press) in place of its own input for
+  the stalled frame. All units therefore drop the player at the same frame.
+* **Multiboot:**
+  * The game is linked to execute from the 256 KB EWRAM. When started from a cartridge it copies
+    itself there first.
+  * The ROM image is about 200 KB, which leaves room for the game's working data. Graphics are
+    stored LZ77-compressed and are unpacked into VRAM by the game, not by the BIOS.
+  * Transfer to one client takes about 30 s, and longer for three.
+* **Verification:** `tools/linktest` runs 2-4 emulated GBAs (libmgba) on an emulated link cable.
+  It hashes the game state on every unit every frame and compares the hashes to detect
+  divergence, and checks the board for flames or rubble with no adjacent flame.
 
 ## licence and credits
 The source code is under the MIT licence, see [LICENSE](LICENSE).
