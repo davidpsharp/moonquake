@@ -1,38 +1,9 @@
-
-
-
-// before release
-// ==============
-// timings with Acorn version, should feel similar speed on gba hardware
-// fix slow down on later levels with more robots
-// tidy up source code, check comments and split up files
-
-// to do list
-// =============
-// display score
-// sometimes see dead person sprites appear periodically - never seen before, dodgy copy/init of OAM RAM having changed type
-// cheat menu from the start menu for debugging the gameplay
-// need text to type everything on that screen if button pressed
-// player slows down when moving over a column full of monsters (with 3 or more) - is collision detection too intensive
-// needs option to save game, password level or some way so player doesn't have to start from scratch
-// compile with optimisation turned on
-// length of token sample wrong?
-// have a pling noise when press A on 1 player/instructions option on menu
-// run with profiler to see where we can optimise - really need to test on the actual hardware
-// make it so only start button starts game on title screen
-// how can we get it to play 2 samples simulateously - need to decide on priority of them too since more than 2 channels in Arc version
-// check size of variables to use, do u8's cause a lot of ANDing in generated code?
-// use static declarations of drawtile() rather than variable so can statically declare all the way down inlined code
-// loop unroll some generalisations
-// playing area surrounded by indestructible blocks that are never shown on display to reduce range checks
-// get rid of where have set area[][] value before calling drawobject()
-// does changing man's direction variable from x and y change to a single direction variable like robots
-// do the graphics need gamma correcting to look ok on GBA hardware? http://www.pineight.com/gba/
-// should wait be be != 160 instead of >= so if gets called in vblank already it waits til the next time vblanks starts?
-// need to get the timings of player and droid movement as well as all other timings more similar to Acorn, need real hardware
-// should OAM be volatile in the sprites.h file?
-// split up code into multiple files
-
+// Moonquake
+// copyright David Sharp
+// Converted to Game Boy Advance from the original game by Paul Taylor on RISC OS (Archimedes World disk, Feb 1992)
+// Graphics and Sound Effects remain the property of Paul Taylor.
+// https://davidsharp.com/gba
+// https://github.com/davidpsharp/moonquake
 
 
 #include <gba.h>
@@ -459,7 +430,7 @@ int vblankTest = 0;
 // wait for scanline to be off screen (before drawing to it)
 void wait()
 {
-	while( REG_VCOUNT < 160 );
+    while( REG_VCOUNT < 160 );
 }
 
 // wait until any key pressed until return
@@ -490,11 +461,11 @@ void delayOrKeypress(int numOfVSyncs)
     int i;
     for(i=0; i<numOfVSyncs; i++)
     {
-    	// re-seed randomizer as many times through loop as user permits before pressing
-    	// a button, will timeout too though so can't purely rely on this hence the additional
-    	// randomization on the wait until the user presses start on the start screen.
-    	srand(rand());
-    	
+        // re-seed randomizer as many times through loop as user permits before pressing
+        // a button, will timeout too though so can't purely rely on this hence the additional
+        // randomization on the wait until the user presses start on the start screen.
+        srand(rand());
+
         while( REG_VCOUNT != 160 )
         {
             if( ((~KEYS) & 0x3FF) )
@@ -539,50 +510,50 @@ void drawObject(u16 x, u16 y, u16 object)
 void copyGameOAM(void)
 {
         
-	u16 loop;
-	u16* temp = (u16*)sprites;
-	u16* oamTemp = (u16*)OAM;
-	
-	// ??? check this optimised properly, can we reduce the number of sprites copied
-	const int spriteNumToCopyFrom = 100;
-	const int spriteNumToCopyTo = 128;
-	
-	oamTemp += spriteNumToCopyFrom*4;
-	temp += spriteNumToCopyFrom*4;
-	
-	// ??? optimise, we use a lot less sprites than 28
-	// ??? since so few sprites ~14 (check this) could use thumb code and loop unroll!
-	for(loop = spriteNumToCopyFrom*4; loop < spriteNumToCopyTo*4; loop++)
-	{
-		*oamTemp++ = *temp++;
-	}
-	
+    u16 loop;
+    u16* temp = (u16*)sprites;
+    u16* oamTemp = (u16*)OAM;
+
+    // ??? check this optimised properly, can we reduce the number of sprites copied
+    const int spriteNumToCopyFrom = 100;
+    const int spriteNumToCopyTo = 128;
+
+    oamTemp += spriteNumToCopyFrom*4;
+    temp += spriteNumToCopyFrom*4;
+
+    // ??? optimise, we use a lot less sprites than 28
+    // ??? since so few sprites ~14 (check this) could use thumb code and loop unroll!
+    for(loop = spriteNumToCopyFrom*4; loop < spriteNumToCopyTo*4; loop++)
+    {
+        *oamTemp++ = *temp++;
+    }
+
 }
 
 // copies all 128 sprites across to OAM, ideal for displaying lots of text on screen
 void copyAllOAM(void)
 {
-	u16 loop;
-	u16* temp = (u16*)sprites;
-	u16* oamTemp = (u16*)OAM;
-	
-	for(loop = 0; loop < 128*4; loop++)
-	{
-		*oamTemp++ = *temp++;
-	}	    
+    u16 loop;
+    u16* temp = (u16*)sprites;
+    u16* oamTemp = (u16*)OAM;
+
+    for(loop = 0; loop < 128*4; loop++)
+    {
+        *oamTemp++ = *temp++;
+    }	    
 }
 
 // copy from the start to the end of the specified sprite numbers (inclusive) to OAM
 void copySelectOAM(int start, int end)
 {   
-	u16 loop;
-	u16* temp = (u16*)sprites;
-	u16* oamTemp = (u16*)OAM;
-	
-	for(loop = start*4; loop < (end+1)*4; loop++)
-	{
-		*oamTemp++ = *temp++;
-	}
+    u16 loop;
+    u16* temp = (u16*)sprites;
+    u16* oamTemp = (u16*)OAM;
+
+    for(loop = start*4; loop < (end+1)*4; loop++)
+    {
+        *oamTemp++ = *temp++;
+    }
 }
 
 // copy a single sprite number across to OAM RAM
@@ -602,16 +573,16 @@ void copySingleOAM(int spriteNum)
 // initialise sprites for when cart starts up
 void initSprites(void)
 {
-	// set all sprites to be off display
+    // set all sprites to be off display
 
-	u16 loop;
-	for(loop = 0; loop < 128; loop++)
-	{
-	    sprites[loop].attr0 = COLOR_256 | 256; //y to > 159
+    u16 loop;
+    for(loop = 0; loop < 128; loop++)
+    {
+        sprites[loop].attr0 = COLOR_256 | 256; //y to > 159
         sprites[loop].attr1 = SIZE_16 | 256;   //x to > 239
-	}
-	
-	copyAllOAM();
+    }
+
+    copyAllOAM();
 }
 
 // sets up sprite attributes for one sprite, ready to be copied to OAM RAM at end of frame
@@ -658,19 +629,19 @@ void turnOffSprites(int firstSprite, int lastSprite)
 
 void BrightnessInit(void)
 {
-	REG_BLDMOD = 0x290; // use this but make sure there's no colour 0 (currently black) in background!!!
+    REG_BLDMOD = 0x290; // use this but make sure there's no colour 0 (currently black) in background!!!
     REG_COLEV = 0x10;
 }
 
 void BrightnessSetLevel(int brightnessLevel)
 {
-	REG_COLEY = brightnessLevel;
+    REG_COLEY = brightnessLevel;
 }
 
 void BrightnessEnd(void)
 {
-	// ??? should really turn the brightness flags off but this looks just the same
-	    
+    // ??? should really turn the brightness flags off but this looks just the same
+
     // turn brightness down to normal again before fading out
     BrightnessSetLevel(0);
 }
@@ -678,8 +649,8 @@ void BrightnessEnd(void)
 void BrightnessSetSpritesInactive(int firstSprite, int lastSprite)
 {
         
-	int sprCount;
-	for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
+    int sprCount;
+    for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
     {
         sprites[sprCount].attr0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
         sprites[sprCount].attr0 |= 1 << 10;	// set to semi-transparent mode
@@ -688,9 +659,9 @@ void BrightnessSetSpritesInactive(int firstSprite, int lastSprite)
 
 void BrightnessSetSpritesActive(int firstSprite, int lastSprite)
 {
-	// for brightness adjust, it appears the sprites have to be in semi-transparent mode
+    // for brightness adjust, it appears the sprites have to be in semi-transparent mode
 
-	int sprCount;
+    int sprCount;
     for(sprCount = firstSprite; sprCount <= lastSprite; sprCount++)
     {
         sprites[sprCount].attr0 &= ~(0xC00);	// clear OBJ mode flag to ensure Normal OBJ mode
@@ -1212,7 +1183,7 @@ void plantBomb(int playerNum, s8 x, s8 y)
     // plant a bomb at the specified tile number on display
     drawObject(x, y, T_BOMB_SMALL);
 
-	// set bomb countdown to total    
+    // set bomb countdown to total    
     bombVal[x][y] = 32;
 }
 
@@ -1635,20 +1606,20 @@ void checkInGameKeyPresses(int playerNum)
         s8 manTileX = p->x / 16;
         s8 manTileY = p->y / 16;
     
-    	// if player wants to drop a bomb or they automatically drop a bomb at the moment
+        // if player wants to drop a bomb or they automatically drop a bomb at the moment
         if( ((p->input & IN_BOMB) && !p->bombHeld) || p->autoPlantBombs)
         {
-        	// if the user can drop bombs on this tile then
+            // if the user can drop bombs on this tile then
             if( area[manTileX][manTileY] == T_SPACE)
             {
-            	// drop bomb if we can
+                // drop bomb if we can
                 if(p->bombsCurrentlyDropped < p->maxBombsAllowed)
                     plantBomb(playerNum, manTileX, manTileY);
             }
         }
     
-    	// check for player pressing certain directions
-    	
+        // check for player pressing certain directions
+
         if( p->input & IN_UP )
         {
             if(isTileEnterable(manTileX, manTileY - 1) )
@@ -1701,7 +1672,7 @@ void nuke()
     {
         for(x = 0; x<AREA_X; x++)
         {
-        	// blow up rubble
+            // blow up rubble
             if(T_RUBBLE == area[x][y])
             {
                 drawObject(x,y,T_RUBBLE_EXPLO_START);
@@ -1710,8 +1681,8 @@ void nuke()
             else if(T_BLOCK != area[x][y] &&
                     !(area[x][y] >= T_RUBBLE_EXPLO_START && area[x][y] <= T_RUBBLE_EXPLO_END))
             {
-            	// fill in all spaces with explosion (leaving rubble that's already exploding,
-            	// see detonateBomb()) (basically only do odd numbered spaces)
+                // fill in all spaces with explosion (leaving rubble that's already exploding,
+                // see detonateBomb()) (basically only do odd numbered spaces)
                 if(y & 1)
                 {
                     // every other tile is space
@@ -1933,7 +1904,7 @@ void moveMan(struct Player* p)
             // if have exceeded dying animation then dead
             if(p->frame > 5 )
             {
-            	// player now dead
+                // player now dead
                 p->lifeStatus = DEAD;
                 timeOfDeath = universalTimer + 1000; // add 1000 for when the screen should blank out
             }
@@ -1966,9 +1937,9 @@ void moveMan(struct Player* p)
     int i;
     for(i=0; i<totalRobots; i++)
     {
-    	// note, important to still poll all robots for collision when the player has a halo even if none of the robots
-    	// can hurt the player, this is so the game doesn't speed up when we have a halo
-    	
+        // note, important to still poll all robots for collision when the player has a halo even if none of the robots
+        // can hurt the player, this is so the game doesn't speed up when we have a halo
+
         if(robot[i].dead == ALIVE)
         {
             
@@ -2091,7 +2062,7 @@ void detonateBomb(u8 x, u8 y)
         s8 ny = y;
         for(length = 1; length<=flameLength; length++)
         {
-        	// adjust to next tile
+            // adjust to next tile
             nx += dx;
             ny += dy;
             
@@ -2153,7 +2124,7 @@ void detonateBomb(u8 x, u8 y)
                 
                 if(T_NUKE1 == area[nx][ny] || T_NUKE0 == area[nx][ny])
                 {
-                	// explode nuclear reactor
+                    // explode nuclear reactor
                     nukedBy = bombOwner[x][y];
                     nuke();
                     return; // whole screen blowing so no need for this explosion
@@ -2172,14 +2143,14 @@ void detonateBomb(u8 x, u8 y)
                     // check for end of flame
                     if(length == flameLength)
                     {
-                    	// draw end of flame
+                        // draw end of flame
                         area[nx][ny] = endtile;
                         drawObject(nx, ny, endtile);
                         bombVal[nx][ny] = 0;
                     }
                     else
                     {
-                    	// draw midflame tile
+                        // draw midflame tile
                         area[nx][ny] = midtile;
                         drawObject(nx, ny, midtile);
                         bombVal[nx][ny] = 0;
@@ -2295,8 +2266,8 @@ void robotAI()
     {
         if(robot[i].dead == ALIVE)
         {
-        	
-			// if robot is placed squarely on a tile (i.e. time to decide where to move again)
+
+            // if robot is placed squarely on a tile (i.e. time to decide where to move again)
             if( (!(robot[i].x % 16)) && (!(robot[i].y % 16)) )
             {
                 
@@ -2357,8 +2328,8 @@ void robotAI()
 // move robots according to predetermined AI
 void moveRobots()
 {
-	// ??? could be that it's this code slowing up the game when there are more robots as it's quite intense
-	
+    // ??? could be that it's this code slowing up the game when there are more robots as it's quite intense
+
     // Robots move a pixel a frame, 16 frames a tile, half the man's speed, as in the Acorn
     // original (they used to move every other frame, so only a quarter of the man's speed)
     {
@@ -2668,7 +2639,7 @@ void showLevel(void)
     // turn off all 128 sprites available to the GBA
     initSprites();
     
-   	// load background tile data
+    // load background tile data
     // tile data appears to have to be loaded 16 bits at a time, why????
     unLZ77Vram(background_lz, tiles);
     
@@ -2720,10 +2691,10 @@ void showLevel(void)
 // ask player whether to continue the game once they've lost all 3 lives
 bool shouldGameContinue(void)
 {
-	
-	// assume already faded to black
-	
-	displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
+
+    // assume already faded to black
+
+    displayTiledBitmap(titlescreen_lz, titlescreen_Palette);
         
     // load sprite palette
     int i;
@@ -2777,7 +2748,7 @@ bool shouldGameContinue(void)
                 fadeValue = 0;
                 
                 BrightnessSetSpritesInactive(firstSpriteOfYes, firstSpriteOfNo - 1);
-    			BrightnessSetSpritesActive(firstSpriteOfNo, spriteNum - 1);
+                BrightnessSetSpritesActive(firstSpriteOfNo, spriteNum - 1);
                 
             }
         }
@@ -2788,8 +2759,8 @@ bool shouldGameContinue(void)
                 selected = 0;
                 fadeValue = 0;
                 
-				BrightnessSetSpritesActive(firstSpriteOfYes, firstSpriteOfNo - 1);
-    			BrightnessSetSpritesInactive(firstSpriteOfNo, spriteNum - 1);
+                BrightnessSetSpritesActive(firstSpriteOfYes, firstSpriteOfNo - 1);
+                BrightnessSetSpritesInactive(firstSpriteOfNo, spriteNum - 1);
             }
         }
         
@@ -2797,19 +2768,19 @@ bool shouldGameContinue(void)
         
         delay(2);
         BrightnessSetLevel(fadeValue);
-		copySelectOAM(OAM_LETTERS, spriteNum);
+        copySelectOAM(OAM_LETTERS, spriteNum);
     }
     
     BrightnessEnd();
-	
-	turnOffSprites(OAM_LETTERS, spriteNum);
+
+    turnOffSprites(OAM_LETTERS, spriteNum);
     copyAllOAM();
-	
-	if( 0 == selected )
-		return TRUE;
-	else
-		return FALSE;	
-	
+
+    if( 0 == selected )
+        return TRUE;
+    else
+        return FALSE;	
+
 }
 
 // start new game
@@ -3035,10 +3006,10 @@ void displayStory()
         // check if the user has had enough story for one sitting
         if( KEY_DOWN( KEYSTART ) )
         {
-	        fadeToBlack();
-	        turnOffAllSprites();
-	        copyAllOAM();
-	        return;
+            fadeToBlack();
+            turnOffAllSprites();
+            copyAllOAM();
+            return;
         }
                 
         switch( messages[msgCount][0] )
@@ -3096,7 +3067,7 @@ void displayStory()
 int handleDeath(void)
 {
     struct Player* p = &player[0];
-	p->lives--;
+    p->lives--;
             
     if( p->lives >= 0 && !nuked)
     {
@@ -3160,7 +3131,7 @@ int handleDeath(void)
             // load sprite palette
             int i;
             for(i=0; i<256; i++)
-            	OBJPaletteMem[i] = spritePalette[i];
+                OBJPaletteMem[i] = spritePalette[i];
             
             u32 spriteNum = OAM_LETTERS;
             writeText(0, 0, "YOU'RE DEAD.", &spriteNum);
@@ -3186,23 +3157,23 @@ int handleDeath(void)
         
         if( shouldGameContinue() )
         {
-        	// remember that player has continued (for game completion message)
-        	playerHasContinued = TRUE;
-        	
-        	fadeToBlack();
-        	
-        	// set up game for user to continue playing from start of this level
-        	initialiseLevel();
-        	
-        	// re-initialise some values to continue play
-        	nuked = FALSE;
-		    p->lifeStatus = ALIVE;
-		    p->lives = 2;
-    	}
-    	else
-    	{
-    		// leave gameloop function
-        	return TRUE;
+            // remember that player has continued (for game completion message)
+            playerHasContinued = TRUE;
+
+            fadeToBlack();
+
+            // set up game for user to continue playing from start of this level
+            initialiseLevel();
+
+            // re-initialise some values to continue play
+            nuked = FALSE;
+            p->lifeStatus = ALIVE;
+            p->lives = 2;
+        }
+        else
+        {
+            // leave gameloop function
+            return TRUE;
         }
     }
     
@@ -3530,7 +3501,7 @@ void gameLoop(void)
             if(player[0].lifeStatus == DEAD)
             {
                 if( handleDeath() )
-                	return;   
+                    return;   
             }
         }
         else
@@ -3706,7 +3677,7 @@ void gameLoop(void)
 
 void displayText()
 {
-	
+
     initSprites();
     
     // load sprite palette
@@ -3847,35 +3818,35 @@ void startGameAndManageContinues(bool continueSaved)
                 
                 // load sprite palette
                 for(i=0; i<256; i++)
-                	OBJPaletteMem[i] = spritePalette[i];
+                    OBJPaletteMem[i] = spritePalette[i];
                 
                 if( playerHasContinued )
                 {
-                	// display against black background
-                	
-                	u32 spriteNum = OAM_LETTERS;
-				    writeText(-1, 20, "YOU MAY HAVE FINISHED", &spriteNum);
-				    writeText(-1, 40, "ALL THE LEVELS, BUT...", &spriteNum);
-				    writeText(-1, 90, "CAN YOU DO IT", &spriteNum);
-					writeText(-1, 110, "WITHOUT USING", &spriteNum);
-				    writeText(-1, 130, "ANY CONTINUES?", &spriteNum);
-            	}
-            	else if(startLevel > 0)
-            	{
-            	    // display against black background
-                	
-                	u32 spriteNum = OAM_LETTERS;
-				    writeText(-1, 20, "YOU MAY HAVE FINISHED", &spriteNum);
-				    writeText(-1, 40, "THE LAST FEW LEVELS", &spriteNum);
-				    writeText(-1, 90, "BUT HOW ABOUT", &spriteNum);
-					writeText(-1, 110, "TRYING IT FROM", &spriteNum);
-				    writeText(-1, 130, "THE START?", &spriteNum);
-            	}
-            	else
-            	{
-            		// credits screen taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
-                	displayTiledBitmap(credits_lz, credits_Palette);
-            		
+                    // display against black background
+
+                    u32 spriteNum = OAM_LETTERS;
+                    writeText(-1, 20, "YOU MAY HAVE FINISHED", &spriteNum);
+                    writeText(-1, 40, "ALL THE LEVELS, BUT...", &spriteNum);
+                    writeText(-1, 90, "CAN YOU DO IT", &spriteNum);
+                    writeText(-1, 110, "WITHOUT USING", &spriteNum);
+                    writeText(-1, 130, "ANY CONTINUES?", &spriteNum);
+                }
+                else if(startLevel > 0)
+                {
+                    // display against black background
+
+                    u32 spriteNum = OAM_LETTERS;
+                    writeText(-1, 20, "YOU MAY HAVE FINISHED", &spriteNum);
+                    writeText(-1, 40, "THE LAST FEW LEVELS", &spriteNum);
+                    writeText(-1, 90, "BUT HOW ABOUT", &spriteNum);
+                    writeText(-1, 110, "TRYING IT FROM", &spriteNum);
+                    writeText(-1, 130, "THE START?", &spriteNum);
+                }
+                else
+                {
+                    // credits screen taken from http://www.spacedaily.com/news/nuclear-blackmarket-02c.html
+                    displayTiledBitmap(credits_lz, credits_Palette);
+
                     u32 spriteNum = OAM_LETTERS;
                     writeText(-1, 30, "CONGRATULATIONS!", &spriteNum);
                     writeText(-1, 70, "YOU HAVE MANAGED", &spriteNum);
@@ -4477,9 +4448,9 @@ int main(void)
     // init sound fx
     irqInit();
 
-	// Maxmod requires the vblank interrupt to reset sound DMA.
-	// Link the VBlank interrupt to mmVBlank, and enable it. 
-	irqSet( IRQ_VBLANK, onVBlank );
+    // Maxmod requires the vblank interrupt to reset sound DMA.
+    // Link the VBlank interrupt to mmVBlank, and enable it. 
+    irqSet( IRQ_VBLANK, onVBlank );
 
     irqEnable(IRQ_VBLANK);
 
