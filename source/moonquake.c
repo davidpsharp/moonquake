@@ -1,6 +1,6 @@
 // Moonquake
 // copyright David Sharp
-// Converted to Game Boy Advance from the original game by Paul Taylor on RISC OS (Archimedes World disk, Feb 1992)
+// Converted to Game Boy Advance from the original game by Paul Taylor on RISC OS (Archimedes World cover disk, Dec 1992)
 // Graphics and Sound Effects remain the property of Paul Taylor.
 // https://davidsharp.com/gba
 // https://github.com/davidpsharp/moonquake
