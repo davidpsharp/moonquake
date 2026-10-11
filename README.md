@@ -1,19 +1,104 @@
 # moonquake
-A bomberman clone for the Game Boy Advance, written in low-level C for the Game Boy's embedded ARM7TDMI hardware environment.
+Moonquake Advance: a Game Boy Advance conversion of Paul Taylor's 1992 Acorn RISC OS game Moonquake,
+written in C for the GBA's ARM7TDMI. The objective is to clear the rubble from each of the 10
+levels of a lunar base using bombs, while avoiding the base's malfunctioning security robots and
+not detonating the nuclear reactors that power them.
 
-Reimplementation of the original game by Paul Taylor on Acorn RISC OS computers.
+Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releases).
+[Original project page](https://davidsharp.com/gba/).
+
+## key features
+* **Single player game:** 10 levels with robots, reactors and power-up tokens, following the Acorn original's rules.
+  Robot AI and level generation are translated directly from the original's ARM assembly.
+* **2-4 player link play:** last-player-standing match over the GBA link cable, in the GBA's
+  multiplayer serial mode at 115,200 bit/s. Verified on GBA SP hardware and on the Analogue
+  Pocket with 4-player link cables.
+* **Multiboot:** only player 1 needs the cartridge. The other units boot with no cartridge
+  inserted, and the game is sent to them over the link cable by the BIOS multiboot protocol.
+* **Dropout handling:** a player who leaves from the pause menu or whose cable is
+  disconnected is removed from the match, and the remaining players continue.
+* **Timing and audio matched to the original:** flame, rubble, halo and token durations and
+  sample playback rates were measured against the Acorn original running in the Arculator emulator.
+* **Pause menu and save game:** a single player game can be saved to battery-backed cartridge SRAM
+  and continued later.
+* **Automated build and test:** GitHub Actions builds each commit with a pinned devkitARM toolchain
+  and runs 2-4 player link scenarios (including multiboot) on emulated GBAs before releasing.
+  The build version is shown on the credits screen.
+
+## gameplay
+<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/f208e48b-1721-413d-9309-e6681c8d83ba" />
+<img width="480" alt="Single player game, level 8" src="https://github.com/user-attachments/assets/af5e52b8-1bc2-4082-82a9-41708ec453d6" />
+
+Left: a 4 player link game on level 3, as seen on player 1's (green's) screen. Right: a single player game on level 8.
+
+<img width="320" alt="Waiting screen: 4 players connected" src="https://github.com/user-attachments/assets/af6bba17-ce7e-42c6-b7ae-3c703ef6d317" />
+<img width="320" alt="Match start on player 2's screen" src="https://github.com/user-attachments/assets/7f4d5057-0d7a-4424-95f2-8ab9c0b45a96" />
+<img width="320" alt="Explosions with several players on screen" src="https://github.com/user-attachments/assets/45ef225f-30ba-4bf2-b383-1b9b6aee99da" />
+<img width="320" alt="A player dies: lives left for each player" src="https://github.com/user-attachments/assets/d14d4673-967a-4042-9be6-6b655c91fbe6" />
+<img width="320" alt="Match result" src="https://github.com/user-attachments/assets/a21b2cbf-7c16-42f3-82db-32f2e3789335" />
+
+4 player link game: waiting screen on player 1, match start on player 2, explosions, a player's
+death, and the result.
 
 ![image](https://github.com/user-attachments/assets/a5209c00-f989-4563-90f3-a27486fe5845)
 ![image](https://github.com/user-attachments/assets/66f9dd8f-26fc-44cc-919c-c900eb3b1d34)
 ![image](https://github.com/user-attachments/assets/d9f06d92-4d4c-4883-a3a3-0f6f96e249ac)
 ![image](https://github.com/user-attachments/assets/fb16b95a-4aef-42df-9e06-9a7826ca2e8d)
 
+The animations and stills were captured in mGBA using `tools/linktest`, with players controlled by
+random input. For the animations only, player deaths were disabled so that no death banners
+interrupt play. The stills come from an unmodified build.
 
+## background
+* Moonquake was written by Paul Taylor for Acorn RISC OS computers. It was distributed on the cover
+  disk of the December 1992 issue of Archimedes World magazine.
+* The original includes a 2 player battle mode. Acorn machines were in wide use in UK
+  schools at the time, and the game was distributed widely in that setting.
 
+## conversion
+The 2004 conversion (v0.1.0 and v0.1.1):
+* **Code:** reimplemented in C. The routines that determine gameplay behaviour, robot AI and
+  level generation, were translated directly from the RISC OS version's ARM assembly so that the
+  behaviour is identical. The remaining code was written new to reproduce the original's behaviour.
+* **Assets:** graphics and sound samples were extracted from the original unmodified.
+* **Sound:** sample playback used Richard Heasman's routines from his GBA conversion of Defender,
+  without modification.
+* **Hardware testing:** tested on a GBA SP with an XG Flash rewritable cartridge.
+* **Single player only:** the 2004 conversion did not include the 2 player mode. Link cable
+  communication and multiboot were outside the scope of that release.
 
-[Homepage](https://davidsharp.com/gba/)
-
-Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releases).
+From 2023 the code was moved to the devkitARM toolchain, libgba and the maxmod sound library. The
+2026 enhancements were developed with Claude AI:
+* **Lockstep link protocol:**
+  * The master starts a multiplayer-mode serial transfer about every 1 ms from a timer
+    interrupt (16 × 1024 CPU cycles). Each transfer carries one 16-bit word from every unit to
+    all the others.
+  * A game word holds a 2-bit frame number, the 6-bit input for that frame, and the input for
+    the previous frame.
+  * A unit does not advance to frame n+1 until it has every other player's input for frame n.
+    Units therefore never differ by more than one frame, and the game state is identical on all
+    units because it is computed from the same inputs.
+* **Dropouts:** the master detects a disconnected unit and broadcasts its removal as a reserved
+  input value (up and down together, which a player cannot press) in place of its own input for
+  the stalled frame. All units therefore drop the player at the same frame.
+* **Multiboot:**
+  * The game is linked to execute from the 256 KB EWRAM. When started from a cartridge it copies
+    itself there first.
+  * The ROM image is about 200 KB, which leaves room for the game's working data. Graphics are
+    stored LZ77-compressed and are unpacked into VRAM by the game, not by the BIOS.
+  * Transfer to one client takes about 30 s, and longer for three.
+* **Timing:** durations are counted in game frames. Flames last 5 pictures × 5 frames
+  (about 0.42 s), exploding rubble 8 pictures × 3 frames, a halo 257 frames, and the robot freeze
+  and auto bomb tokens 900 frames (15 s).
+* **Audio:**
+  * The samples are stored at 10,146 Hz. The original played each one at a pitch set per
+    effect, which RISC OS 3.71's Sound_Pitch converts to 8,219 Hz (explosion), 11,393 Hz
+    (player death), 13,916 Hz (robot death) and 46,793 Hz (token).
+  * maxmod's rate is set to `hz × 1024 / 10146` to reproduce these rates.
+  * A new effect cancels the previous instance of the same effect.
+* **Verification:** `tools/linktest` runs 2-4 emulated GBAs (libmgba) on an emulated link cable.
+  It hashes the game state on every unit every frame and compares the hashes to detect
+  divergence, and checks the board for flames or rubble with no adjacent flame.
 
 ## cheat for testing
 On the title menu press L, R, L, R, SELECT (a double blip says it's worked). Until the Game Boy's
