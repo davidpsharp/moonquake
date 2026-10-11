@@ -23,7 +23,7 @@ Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releas
   The build version is shown on the credits screen.
 
 ## gameplay
-<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/035cf26a-95bc-4539-a49c-c075d7ef343e" />
+<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/1ac386f5-7083-4d54-b911-aecb929ba5ae" />
 <img width="480" alt="Single player game, level 8" src="https://github.com/user-attachments/assets/3c5fb3a9-8155-4a93-a788-137837a48057" />
 
 Left: a 4 player link game on level 3, as seen on player 1's (green's) screen. Right: a single player game on level 8.
@@ -37,10 +37,6 @@ Left: a 4 player link game on level 3, as seen on player 1's (green's) screen. R
 
 4 player link game: waiting screen on player 1, match start on player 2, explosions, a player's
 death, and the result. Last: a reactor explosion in a single player game on level 8.
-
-All footage is from the unmodified game, captured in mGBA using `tools/linktest`. The players are
-controlled by scripted input. In the
-single player animation, the player is given the extra bombs that the game's bomb tokens award.
 
 ## background
 * Moonquake was written by Paul Taylor for Acorn RISC OS computers. It was distributed on the cover
