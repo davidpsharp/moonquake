@@ -10,13 +10,10 @@ Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releas
 ## key features
 * **Single player game:** 10 levels with robots, reactors and power-up tokens, following the Acorn original's rules.
   Robot AI and level generation are translated directly from the original's ARM assembly.
-* **2-4 player link play:** last-player-standing match over the GBA link cable, in the GBA's
-  multiplayer serial mode at 115,200 bit/s. Verified on GBA SP hardware and on the Analogue
-  Pocket with 4-player link cables.
+* **2-4 player link play:** last-player-standing match over the GBA link cable. Verified on GBA SP
+  hardware and on the Analogue Pocket with 4-player link cables.
 * **Multiboot:** only player 1 needs the cartridge. The other units boot with no cartridge
   inserted, and the game is sent to them over the link cable by the BIOS multiboot protocol.
-* **Dropout handling:** a player who leaves from the pause menu or whose cable is
-  disconnected is removed from the match, and the remaining players continue.
 * **Timing and audio matched to the original:** flame, rubble, halo and token durations and
   sample playback rates were measured against the Acorn original running in the Arculator emulator.
 * **Pause menu and save game:** a single player game can be saved to battery-backed cartridge SRAM
@@ -26,30 +23,24 @@ Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releas
   The build version is shown on the credits screen.
 
 ## gameplay
-<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/f208e48b-1721-413d-9309-e6681c8d83ba" />
-<img width="480" alt="Single player game, level 8" src="https://github.com/user-attachments/assets/af5e52b8-1bc2-4082-82a9-41708ec453d6" />
+<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/035cf26a-95bc-4539-a49c-c075d7ef343e" />
+<img width="480" alt="Single player game, level 8" src="https://github.com/user-attachments/assets/3c5fb3a9-8155-4a93-a788-137837a48057" />
 
 Left: a 4 player link game on level 3, as seen on player 1's (green's) screen. Right: a single player game on level 8.
 
 <img width="320" alt="Waiting screen: 4 players connected" src="https://github.com/user-attachments/assets/af6bba17-ce7e-42c6-b7ae-3c703ef6d317" />
 <img width="320" alt="Match start on player 2's screen" src="https://github.com/user-attachments/assets/7f4d5057-0d7a-4424-95f2-8ab9c0b45a96" />
-<img width="320" alt="Explosions with several players on screen" src="https://github.com/user-attachments/assets/45ef225f-30ba-4bf2-b383-1b9b6aee99da" />
+<img width="320" alt="Explosions with several players on screen" src="https://github.com/user-attachments/assets/9d1f7284-76f0-42b6-b1fd-301f9662ac88" />
 <img width="320" alt="A player dies: lives left for each player" src="https://github.com/user-attachments/assets/d14d4673-967a-4042-9be6-6b655c91fbe6" />
 <img width="320" alt="Match result" src="https://github.com/user-attachments/assets/a21b2cbf-7c16-42f3-82db-32f2e3789335" />
+<img width="320" alt="Reactor explosion" src="https://github.com/user-attachments/assets/d0dd8c5f-680b-49cf-a88b-bd6dd083cb88" />
 
 4 player link game: waiting screen on player 1, match start on player 2, explosions, a player's
-death, and the result.
+death, and the result. Last: a reactor explosion in a single player game on level 8.
 
-![image](https://github.com/user-attachments/assets/a5209c00-f989-4563-90f3-a27486fe5845)
-![image](https://github.com/user-attachments/assets/66f9dd8f-26fc-44cc-919c-c900eb3b1d34)
-![image](https://github.com/user-attachments/assets/d9f06d92-4d4c-4883-a3a3-0f6f96e249ac)
-![image](https://github.com/user-attachments/assets/fb16b95a-4aef-42df-9e06-9a7826ca2e8d)
-
-Single player game: explosions, and a reactor explosion ending the game.
-
-The animations and stills were captured in mGBA using `tools/linktest`, with players controlled by
-random input. For the animations only, player deaths were disabled so that no death banners
-interrupt play. The stills come from an unmodified build.
+All footage is from the unmodified game, captured in mGBA using `tools/linktest`. The players are
+controlled by scripted input. In the
+single player animation, the player is given the extra bombs that the game's bomb tokens award.
 
 ## background
 * Moonquake was written by Paul Taylor for Acorn RISC OS computers. It was distributed on the cover
@@ -89,15 +80,6 @@ From 2023 the code was moved to the devkitARM toolchain, libgba and the maxmod s
   * The ROM image is about 200 KB, which leaves room for the game's working data. Graphics are
     stored LZ77-compressed and are unpacked into VRAM by the game, not by the BIOS.
   * Transfer to one client takes about 30 s, and longer for three.
-* **Timing:** durations are counted in game frames. Flames last 5 pictures × 5 frames
-  (about 0.42 s), exploding rubble 8 pictures × 3 frames, a halo 257 frames, and the robot freeze
-  and auto bomb tokens 900 frames (15 s).
-* **Audio:**
-  * The samples are stored at 10,146 Hz. The original played each one at a pitch set per
-    effect, which RISC OS 3.71's Sound_Pitch converts to 8,219 Hz (explosion), 11,393 Hz
-    (player death), 13,916 Hz (robot death) and 46,793 Hz (token).
-  * maxmod's rate is set to `hz × 1024 / 10146` to reproduce these rates.
-  * A new effect cancels the previous instance of the same effect.
 * **Verification:** `tools/linktest` runs 2-4 emulated GBAs (libmgba) on an emulated link cable.
   It hashes the game state on every unit every frame and compares the hashes to detect
   divergence, and checks the board for flames or rubble with no adjacent flame.
