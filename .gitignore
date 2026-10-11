@@ -76,3 +76,7 @@ dkms.conf
 
 tools/linktest/linktest
 build/
+
+# editor settings (VS Code), kept locally
+.vscode/
+*.code-workspace
