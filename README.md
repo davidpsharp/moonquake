@@ -23,7 +23,7 @@ Download the ROM from [Releases](https://github.com/davidpsharp/moonquake/releas
   The build version is shown on the credits screen.
 
 ## gameplay
-<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/1ac386f5-7083-4d54-b911-aecb929ba5ae" />
+<img width="480" alt="4 player link game, level 3" src="https://github.com/user-attachments/assets/06c2b09e-57d2-4738-9a94-cec6aaf5c21c" />
 <img width="480" alt="Single player game, level 8" src="https://github.com/user-attachments/assets/3c5fb3a9-8155-4a93-a788-137837a48057" />
 
 Left: a 4 player link game on level 3, as seen on player 1's (green's) screen. Right: a single player game on level 8.
