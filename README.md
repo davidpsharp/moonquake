@@ -45,6 +45,8 @@ death, and the result.
 ![image](https://github.com/user-attachments/assets/d9f06d92-4d4c-4883-a3a3-0f6f96e249ac)
 ![image](https://github.com/user-attachments/assets/fb16b95a-4aef-42df-9e06-9a7826ca2e8d)
 
+Single player game: explosions, and a reactor explosion ending the game.
+
 The animations and stills were captured in mGBA using `tools/linktest`, with players controlled by
 random input. For the animations only, player deaths were disabled so that no death banners
 interrupt play. The stills come from an unmodified build.
